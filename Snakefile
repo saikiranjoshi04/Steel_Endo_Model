@@ -11,10 +11,10 @@ from snakemake.utils import min_version
 min_version("8.11")
 
 from scripts._helpers import (
-    path_provider,
-    get_scenarios,
     get_rdir,
+    get_scenarios,
     get_shadow,
+    path_provider,
 )
 
 
@@ -39,8 +39,6 @@ logs = path_provider("logs/", RDIR, shared_resources, exclude_from_shared)
 benchmarks = path_provider("benchmarks/", RDIR, shared_resources, exclude_from_shared)
 resources = path_provider("resources/", RDIR, shared_resources, exclude_from_shared)
 
-cutout_dir = config["atlite"]["cutout_directory"]
-CDIR = Path(cutout_dir).joinpath("" if run["shared_cutouts"] else RDIR)
 RESULTS = "results/" + RDIR
 
 
@@ -56,6 +54,12 @@ wildcard_constraints:
 
 
 include: "rules/common.smk"
+
+
+# Data constants
+OSM_DATASET = dataset_version("osm")
+
+
 include: "rules/collect.smk"
 include: "rules/retrieve.smk"
 include: "rules/build_electricity.smk"
