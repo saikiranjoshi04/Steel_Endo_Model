@@ -1057,6 +1057,12 @@ def rename_techs(label: str) -> str:
         "AC": "transmission lines",
         "DC": "transmission lines",
         "B2B": "transmission lines",
+        "DRI-HBI-HYBRID": "primary route - DRI",
+        "DRI-HBI-NG CC": "primary route - DRI CC",
+        "HBI-EAF": "primary route - DRI+EAF",
+        "BF-BOF": "primary route - blast furnace",
+        "BF-BOF CC": "primary route - blast furnace CC",
+        "EAF-SCRAP": "secondary route - EAF",
     }
 
     for ptr in prefix_to_remove:

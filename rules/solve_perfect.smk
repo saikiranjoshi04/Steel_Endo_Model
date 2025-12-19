@@ -27,11 +27,29 @@ rule add_existing_baseyear:
         ),
         existing_heating="data/existing_infrastructure/existing_heating_raw.csv",
         heating_efficiencies=resources("heating_efficiencies.csv"),
+        capacities=lambda w: (
+            resources("capacities_base_s_{clusters}.csv")
+            if config_provider("sector", "endo_industry", "enable")(w)
+            else []
+        ),
+        start_dates=lambda w: (
+            resources("start_dates_base_s_{clusters}.csv")
+            if config_provider("sector", "endo_industry", "enable")(w)
+            else []
+        ),
+        industrial_distribution_key=lambda w: (
+            resources("industrial_distribution_key_base_s_{clusters}.csv")
+            if config_provider("sector", "endo_industry", "enable")(w)
+            else []
+        ),
     output:
         resources(
             "networks/base_s_{clusters}_{opts}_{sector_opts}_{planning_horizons}_brownfield.nc"
         ),
     wildcard_constraints:
+        # TODO: The first planning_horizon needs to be aligned across scenarios
+        # snakemake does not support passing functions to wildcard_constraints
+        # reference: https://github.com/snakemake/snakemake/issues/2703
         planning_horizons=config["scenario"]["planning_horizons"][0],  #only applies to baseyear
     threads: 1
     resources:

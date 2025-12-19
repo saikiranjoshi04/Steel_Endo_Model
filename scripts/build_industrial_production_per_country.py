@@ -335,5 +335,18 @@ if __name__ == "__main__":
 
     demand.fillna(0.0, inplace=True)
 
+    # Minimal manual steel production override (non-EU27 + CH)
+    # Columns: country,Electric arc,Integrated steelworks
+    overrides = (
+        pd.read_csv("saikiran/manual_steel_production.csv")
+        .set_index("country")[["Electric arc", "Integrated steelworks"]]
+    )
+    cols_needed = {"Electric arc", "Integrated steelworks"}
+    if cols_needed.issubset(demand.columns):
+        common = overrides.index.intersection(demand.index)
+        if not common.empty:
+            demand.loc[common, list(cols_needed)] = overrides.loc[common, list(cols_needed)].astype(float)
+            logger.info("Applied manual steel overrides from CSV for: %s", sorted(common))
+
     fn = snakemake.output.industrial_production_per_country
     demand.to_csv(fn, float_format="%.2f")

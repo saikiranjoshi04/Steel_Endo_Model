@@ -27,7 +27,7 @@ from scripts._helpers import (
 from scripts.add_electricity import sanitize_carriers
 from scripts.build_energy_totals import cartesian
 from scripts.definitions.heat_system import HeatSystem
-from scripts.prepare_sector_network import cluster_heat_buses, define_spatial
+from scripts.prepare_sector_network import cluster_heat_buses, define_spatial , steel_inputs, add_steel_industry
 
 logger = logging.getLogger(__name__)
 cc = coco.CountryConverter()
@@ -715,6 +715,304 @@ def add_heating_capacities_installed_before_baseyear(
                 ],
             )
 
+def add_steel_industry_existing(n: pypsa.Network, costs: pd.DataFrame):
+
+    if not snakemake.input.get("steel_plants"):
+        return
+
+    plants = pd.read_csv(snakemake.input.steel_plants, index_col=0)
+    # expected columns: plant_id, process, capacity (kt/a), start_year, retired_year
+
+    nhours = n.snapshot_weightings.generators.sum()
+    investment_year = int(snakemake.wildcards.planning_horizons)
+    (
+        steel_input,
+        steel_min_load,
+        dri_min_load,
+        steel_lifetime,
+        marginal_cost_eaf,
+    ) = steel_inputs(options, investment_year)
+
+    def _names(df: pd.DataFrame) -> list:
+        """Return simple unique names for each plant.
+
+        Base name = "<bus> <plant_id>" (plant_id empty if missing).
+        If duplicates remain, append a numeric suffix (" 1", " 2", ...).
+        """
+        buses = df.index.to_series().astype(str)
+        if "plant_id" in df.columns:
+            pids = df["plant_id"].fillna("").astype(str)
+        else:
+            pids = pd.Series([""] * len(buses), index=buses.index)
+
+        names = (buses + " " + pids).str.strip().tolist()
+
+        seen: dict[str, int] = {}
+        unique_names: list[str] = []
+        for name in names:
+            if name in seen:
+                seen[name] += 1
+                unique_names.append(f"{name} {seen[name]}")
+            else:
+                seen[name] = 0
+                unique_names.append(name)
+        return unique_names
+
+    def _bus(spatial_carrier, nodes: list[str], label: str):
+        """
+        Return either a single EU-wide bus (if only one node exists)
+        or a per-node list "<zone> <label>".
+        """
+        if len(spatial_carrier.nodes) == 1:
+            return spatial_carrier.nodes[0]
+        return [f"{z} {label}" for z in nodes]
+
+    def _bf_bof_co2_bus(nodes: list[str]):
+        """
+        CO₂ bus for BF-BOF process emissions:
+        either EU-wide node or per-plant "<zone> bf_bof process emissions".
+        """
+        if len(spatial.co2.bf_bof.nodes) == 1:
+            return spatial.co2.bf_bof.nodes[0]
+        return [f"{z} bf_bof process emissions" for z in nodes]
+
+    # EU coal bus is always EU-wide in your setup
+    eu_coal_bus = spatial.coal.nodes[0]
+
+    # -------------------------------------------------------------------------
+    # 1) Integrated steelworks (BF-BOF)
+    # -------------------------------------------------------------------------
+    proc = "Integrated steelworks"
+    suffix = " BF-BOF existing - plant"
+    dfp = plants[plants["process"] == proc]
+    if not dfp.empty:
+        logger.info(
+            "Adding %d BF-BOF plant Links (Integrated steelworks)", len(dfp)
+        )
+
+        names = _names(dfp)
+        nodes = dfp.index.to_list()
+
+        iron_bus = _bus(spatial.iron, nodes, "iron")
+        steel_bus = _bus(spatial.steel, nodes, "steel")
+        co2_bus = _bf_bof_co2_bus(nodes)
+
+        marginal_cost = (
+            costs.at["iron ore DRI-ready", "commodity"]
+            * costs.at["blast furnace-basic oxygen furnace", "ore-input"]
+        )
+
+        n.add(
+            "Link",
+            names,
+            suffix=suffix,
+            bus0=iron_bus,
+            bus1=steel_bus,
+            bus2=eu_coal_bus,
+            bus3=nodes,
+            bus4=co2_bus,
+            carrier="BF-BOF",
+            p_nom=(
+                dfp["capacity"].astype(float)
+                * 1e3
+                / nhours
+                * costs.at[
+                    "blast furnace-basic oxygen furnace", "ore-input"
+                ]
+            ).values,
+            p_nom_extendable=False,
+            p_min_pu = steel_min_load,
+            capital_cost=costs.at[
+                "blast furnace-basic oxygen furnace", "capital_cost"
+            ]
+            / costs.at["blast furnace-basic oxygen furnace", "ore-input"],
+            overnight_cost=costs.at[
+                "blast furnace-basic oxygen furnace", "investment"
+            ]
+            / costs.at["blast furnace-basic oxygen furnace", "ore-input"],
+            marginal_cost=marginal_cost,
+            efficiency=1
+            / costs.at["blast furnace-basic oxygen furnace", "ore-input"],
+            efficiency2=-steel_input["coal_input"]
+            / costs.at["blast furnace-basic oxygen furnace", "ore-input"],
+            efficiency3=-steel_input["elec_input_bof"]
+            / costs.at["blast furnace-basic oxygen furnace", "ore-input"],
+            efficiency4=steel_input["em_factor_bof"]
+            / costs.at["blast furnace-basic oxygen furnace", "ore-input"],
+            build_year=dfp["start_year"].fillna(0).astype(int).values,
+            lifetime=(steel_lifetime,),
+        )
+
+    # -------------------------------------------------------------------------
+    # 2) DRI + EAF (H₂-DRI + HBI-EAF)
+    # -------------------------------------------------------------------------
+    proc = "DRI + EAF"
+    suffix = " DRI-HBI-HYBRID existing - plant"
+    dfp = plants[plants["process"] == proc]
+    if not dfp.empty:
+        logger.info(
+            "Adding %d DRI-HBI-HYBRID Links and corresponding HBI->EAF Links (DRI + EAF)",
+            len(dfp),
+        )
+
+        names = _names(dfp)
+        nodes = dfp.index.to_list()
+
+        iron_bus = _bus(spatial.iron, nodes, "iron")
+        hbi_bus = _bus(spatial.hbi, nodes, "hbi")
+        syngas_bus = _bus(spatial.syngas_dri, nodes, "syn gas for DRI")
+
+        marginal_cost = (
+            costs.at["iron ore DRI-ready", "commodity"]
+            * costs.at["blast furnace-basic oxygen furnace", "ore-input"]
+        )
+
+        n.add(
+            "Link",
+            names,
+            suffix=suffix,
+            bus0=iron_bus,
+            bus1=hbi_bus,
+            bus2=syngas_bus,
+            bus3=nodes,
+            carrier="DRI-HBI-HYBRID",
+            p_nom=(
+                dfp["capacity"].astype(float)
+                * 1e3
+                / nhours
+                * costs.at[
+                    "hydrogen direct iron reduction furnace", "ore-input"
+                ]
+            ).values,
+            p_nom_extendable=False,
+            p_min_pu = dri_min_load,
+            capital_cost=costs.at[
+                "hydrogen direct iron reduction furnace", "capital_cost"
+            ]
+            / costs.at["hydrogen direct iron reduction furnace", "ore-input"],
+            overnight_cost=costs.at[
+                "hydrogen direct iron reduction furnace", "investment"
+            ]
+            / costs.at["hydrogen direct iron reduction furnace", "ore-input"],
+            marginal_cost=marginal_cost,
+            efficiency=1
+            / costs.at["hydrogen direct iron reduction furnace", "ore-input"],
+            efficiency2=-1
+            / costs.at["hydrogen direct iron reduction furnace", "ore-input"],
+            efficiency3=-costs.at[
+                "hydrogen direct iron reduction furnace", "electricity-input"
+            ]
+            / costs.at["hydrogen direct iron reduction furnace", "ore-input"],
+            build_year=dfp["start_year"].fillna(0).astype(int).values,
+            lifetime=(steel_lifetime,),
+        )
+        logger.info("DRI Plant Link names for %s: %s", proc, names[:5])
+
+        # HBI -> EAF stage
+        hbi_suffix = " HBI-EAF existing - plant"
+        logger.info(
+            "Adding %d HBI->EAF Links (electric arc furnace stage)", len(dfp)
+        )
+
+        # (We can reuse names/nodes here, but keep it explicit for clarity)
+        names = _names(dfp)
+        nodes = dfp.index.to_list()
+
+        hbi_bus = _bus(spatial.hbi, nodes, "hbi")
+        steel_bus = _bus(spatial.steel, nodes, "steel")
+
+        n.add(
+            "Link",
+            names,
+            suffix=hbi_suffix,
+            bus0=hbi_bus,
+            bus1=steel_bus,
+            bus2=nodes,
+            carrier="HBI-EAF",
+            p_nom=(
+                dfp["capacity"].astype(float)
+                * 1e3
+                / nhours
+                * costs.at["electric arc furnace", "hbi-input"]
+            ).values,
+            p_nom_extendable=False,
+            # p_min_pu = dri_min_load,
+            capital_cost=costs.at["electric arc furnace", "capital_cost"]
+            / costs.at["electric arc furnace", "hbi-input"],
+            overnight_cost=costs.at["electric arc furnace", "investment"]
+            / costs.at["electric arc furnace", "hbi-input"],
+            efficiency=1 / costs.at["electric arc furnace", "hbi-input"],
+            efficiency2=-costs.at["electric arc furnace", "electricity-input"]
+            / costs.at["electric arc furnace", "hbi-input"],
+            build_year=dfp["start_year"].fillna(0).astype(int).values,
+            lifetime=(steel_lifetime,),
+        )
+
+        logger.info("EAF Plant Link names for %s: %s", proc, names[:5])
+
+    # -------------------------------------------------------------------------
+    # 3) Scrap-based EAF
+    # -------------------------------------------------------------------------
+    proc = "EAF"
+    suffix = " EAF-SCRAP existing - plant"
+    dfp = plants[plants["process"] == proc]
+    if not dfp.empty:
+        logger.info("Adding %d EAF-SCRAP plant Links (EAF)", len(dfp))
+
+        names = _names(dfp)
+        nodes = dfp.index.to_list()
+
+        scrap_bus = _bus(spatial.scrap_steel, nodes, "scrap steel")
+        steel_bus = _bus(spatial.steel, nodes, "steel")
+
+        n.add(
+            "Link",
+            names,
+            suffix=suffix,
+            bus0=scrap_bus,
+            bus1=steel_bus,
+            bus2=nodes,
+            carrier="EAF-SCRAP",
+            p_nom=(
+                dfp["capacity"].astype(float)
+                * 1e3
+                / nhours
+                * steel_input["scrap_steel_eaf"]
+            ).values,
+            p_nom_extendable=False,
+            capital_cost=(
+                costs.at["electric arc furnace", "capital_cost"]
+                / steel_input["scrap_steel_eaf"]
+            ),
+            overnight_cost=(
+                costs.at["electric arc furnace", "investment"]
+                / steel_input["scrap_steel_eaf"]
+            ),
+            marginal_cost=marginal_cost_eaf / steel_input["scrap_steel_eaf"],
+            efficiency=1 / steel_input["scrap_steel_eaf"],
+            efficiency2=-costs.at["electric arc furnace", "electricity-input"]
+            / steel_input["scrap_steel_eaf"],
+            build_year=dfp["start_year"].fillna(0).astype(int).values,
+            lifetime=(steel_lifetime,),
+        )
+
+def set_defaults(n):
+    """
+    Set default values for missing values in the network.
+
+    Parameters
+    ----------
+        n (pypsa.Network): The network object.
+
+    Returns
+    -------
+        None
+    """
+    if "Link" in n.components:
+        if "reversed" in n.links.columns:
+            # Replace NA values with default value False
+            n.links.loc[n.links.reversed.isna(), "reversed"] = False
+            n.links.reversed = n.links.reversed.astype(bool)
 
 if __name__ == "__main__":
     if "snakemake" not in globals():
@@ -731,7 +1029,7 @@ if __name__ == "__main__":
 
     configure_logging(snakemake)  # pylint: disable=E0606
     set_scenario_config(snakemake)
-
+    
     update_config_from_wildcards(snakemake.config, snakemake.wildcards)
 
     options = snakemake.params.sector
@@ -740,6 +1038,8 @@ if __name__ == "__main__":
 
     baseyear = snakemake.params.baseyear
 
+    baseyear = snakemake.params.baseyear
+    investment_year = int(snakemake.wildcards.planning_horizons)
     n = pypsa.Network(snakemake.input.network)
 
     # define spatial resolution of carriers
@@ -796,9 +1096,15 @@ if __name__ == "__main__":
 
     if options.get("cluster_heat_buses", False):
         cluster_heat_buses(n)
+    
+    pop_layout = pd.read_csv(snakemake.input.clustered_pop_layout, index_col=0)
+    nhours = n.snapshot_weightings.generators.sum()
 
+    if options["endo_industry"].get("enable"):
+        add_steel_industry_existing(n,costs)
+        
     n.meta = dict(snakemake.config, **dict(wildcards=dict(snakemake.wildcards)))
-
+  
     sanitize_custom_columns(n)
     sanitize_carriers(n, snakemake.config)
     n.export_to_netcdf(snakemake.output[0])

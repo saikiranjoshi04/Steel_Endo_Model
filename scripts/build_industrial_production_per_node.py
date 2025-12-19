@@ -72,7 +72,24 @@ def build_nodal_industrial_production():
             industrial_production.at[country, sector] * key
         )
 
+    # compute steel aggregates separately (do not add to nodal_production)
+    primary_cols = ["Integrated steelworks", "DRI + Electric arc"]
+    secondary_cols = ["Electric arc"]
+
+    # Aggregate and clip (avoid negative numerical artefacts) in one step
+    primary_steel = nodal_production[primary_cols].sum(axis=1).clip(lower=0)
+    secondary_steel = nodal_production[secondary_cols].sum(axis=1).clip(lower=0)
+
+    # write nodal production without appended steel aggregate columns
     nodal_production.to_csv(snakemake.output.industrial_production_per_node)
+
+    steel_production = pd.DataFrame({
+        "Primary Steel": primary_steel,
+        "Secondary Steel": secondary_steel
+    })
+    # keep only rows with any positive steel production (after clipping)
+    steel_production = steel_production[(steel_production > 0).any(axis=1)]
+    steel_production.to_csv(snakemake.output.steel_production, float_format="%.3f")
 
 
 if __name__ == "__main__":

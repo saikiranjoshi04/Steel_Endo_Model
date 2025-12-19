@@ -932,6 +932,7 @@ rule build_industry_sector_ratios:
     params:
         industry=config_provider("industry"),
         ammonia=config_provider("sector", "ammonia", default=False),
+        endo_industry=config_provider("sector", "endo_industry", "enable"),
     input:
         ammonia_production=resources("ammonia_production.csv"),
         idees="data/jrc-idees-2021",
@@ -1030,6 +1031,7 @@ rule build_industrial_distribution_key:
             "industry", "hotmaps_locate_missing", default=False
         ),
         countries=config_provider("countries"),
+        endo_industry=config_provider("sector", "endo_industry", "enable"),
     input:
         regions_onshore=resources("regions_onshore_base_s_{clusters}.geojson"),
         clustered_pop_layout=resources("pop_layout_base_s_{clusters}.csv"),
@@ -1064,6 +1066,9 @@ rule build_industrial_production_per_node:
     output:
         industrial_production_per_node=resources(
             "industrial_production_base_s_{clusters}_{planning_horizons}.csv"
+        ),
+        steel_production=resources(
+            "steel_production_base_s_{clusters}_{planning_horizons}.csv"
         ),
     threads: 1
     resources:
@@ -1401,6 +1406,60 @@ def input_heat_source_power(w):
         ).keys()
     }
 
+if config["sector"]["endo_industry"]["enable"]:
+    rule build_scrap_steel_distribution:
+        """
+        Build scrap steel availability distribution (kt/a) per node.
+        Currently equals node-level EAF production (100% scrap).
+        """
+        params:
+            baseyear="{planning_horizons}",  # Pass horizon directly as wildcard
+        input:
+            industrial_production = resources(
+                "industrial_production_base_s_{clusters}_{planning_horizons}.csv"
+            ),
+        output:
+            scrap_steel_distribution = resources(
+                "scrap_steel_distribution_{clusters}_{planning_horizons}.csv"
+            ),
+        threads: 1
+        resources:
+            mem_mb = 500,
+        log:
+            logs("build_scrap_steel_distribution_{clusters}_{planning_horizons}.log"),
+        benchmark:
+            benchmarks("build_scrap_steel_distribution_{clusters}_{planning_horizons}"),
+        conda:
+            "../envs/environment.yaml",
+        script:
+            "../scripts/build_scrap_distribution.py"
+    
+
+# New rule: extract existing pre-2020 steel plant capacities and build years
+if config["sector"]["endo_industry"]["enable"]:
+    rule build_existing_steel_plants:
+        params:
+            countries=config_provider("countries"),
+            baseyear=config_provider("scenario", "planning_horizons", 0),  # first planning horizon (e.g. 2020)
+        input:
+            regions_onshore=resources("regions_onshore_base_s_{clusters}.geojson"),
+            gem_gspt="data/gem/Global-Steel-Plant-Tracker-April-2024-Standard-Copy-V1.xlsx",
+        output:
+            capacities=resources("steel_existing_capacities_base_s_{clusters}.csv"),
+            start_dates=resources("steel_existing_start_dates_base_s_{clusters}.csv"),
+            steel_plants=resources("steel_existing_plants_base_s_{clusters}.csv"),
+        threads: 1
+        resources:
+            mem_mb=800,
+        log:
+            logs("build_existing_steel_plants_{clusters}.log"),
+        benchmark:
+            benchmarks("build_existing_steel_plants/s_{clusters}"),
+        conda:
+            "../envs/environment.yaml"
+        script:
+            "../scripts/build_existing_steel_plants.py"
+
 
 rule prepare_sector_network:
     params:
@@ -1435,6 +1494,7 @@ rule prepare_sector_network:
         temperature_limited_stores=config_provider(
             "sector", "district_heating", "temperature_limited_stores"
         ),
+        endo_industry=config_provider("sector", "endo_industry", "enable"),
     input:
         unpack(input_profile_offwind),
         unpack(input_heat_source_power),
@@ -1557,6 +1617,24 @@ rule prepare_sector_network:
             resources("ates_potentials_base_s_{clusters}_{planning_horizons}.csv")
             if config_provider("sector", "district_heating", "ates", "enable")(w)
             else []
+        ),
+        industrial_distribution_key=lambda w: (
+            resources("industrial_distribution_key_base_s_{clusters}.csv")
+            if config_provider("sector", "endo_industry", "enable")(w)
+            else []
+        ),
+        steel_production=lambda w: (
+            resources("steel_production_base_s_{clusters}_{planning_horizons}.csv")
+            if config_provider("sector", "endo_industry", "enable")(w)
+            else []
+        ), 
+        scrap_steel_distribution= lambda w: (
+            resources("scrap_steel_distribution_{clusters}_{planning_horizons}.csv")
+            if config_provider("sector", "endo_industry", "enable")(w)
+            else []
+        ),
+        industry_sector_ratios= lambda w: (
+            resources("industry_sector_ratios_{planning_horizons}.csv")
         ),
     output:
         resources(

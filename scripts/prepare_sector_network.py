@@ -220,6 +220,68 @@ def define_spatial(nodes, options):
     spatial.geothermal_heat.nodes = ["EU enhanced geothermal systems"]
     spatial.geothermal_heat.locations = ["EU"]
 
+
+    # Iron and Steel
+    if options["endo_industry"]["enable"]:
+
+        spatial.iron = SimpleNamespace()
+        spatial.steel = SimpleNamespace()
+        spatial.scrap_steel = SimpleNamespace() 
+        spatial.syngas_dri = SimpleNamespace()
+        spatial.hbi = SimpleNamespace()
+        spatial.co2.bf_bof = SimpleNamespace()
+        spatial.co2.dri = SimpleNamespace()
+
+        if options["endo_industry"]["regional_steel_demand"]:
+            # iron - regional nodes
+            spatial.iron = SimpleNamespace()
+            spatial.iron.nodes = nodes + " iron"
+            spatial.iron.locations = nodes
+           
+            # steel - regional nodes  
+            spatial.steel.nodes = nodes + " steel"
+            spatial.steel.locations = nodes
+            # Dri syngas - regional nodes        
+            spatial.syngas_dri.nodes = nodes + " syn gas for DRI"
+            spatial.syngas_dri.locations = nodes
+            # HBI - regional nodes          
+            spatial.hbi.nodes = nodes + " hbi"
+            spatial.hbi.locations = nodes
+            # Scrap steel - regional nodes  
+            spatial.scrap_steel.nodes = nodes + " scrap steel"
+            spatial.scrap_steel.locations = nodes
+            
+            spatial.co2.bf_bof.nodes = nodes + " bf_bof process emissions"
+            spatial.co2.bf_bof.locations = nodes
+            
+            spatial.co2.dri.nodes = nodes + " dri process emissions"
+            spatial.co2.dri.locations = nodes
+
+        else:
+            # Iron - EU-wide
+
+            spatial.iron.nodes = ["EU iron"]
+            spatial.iron.locations = ["EU"]
+
+            # steel - EU-wide
+            spatial.steel.nodes = ["EU steel"]
+            spatial.steel.locations = ["EU"]
+            # Dri gas - EU-wide
+            spatial.syngas_dri.nodes = ["EU syn gas for DRI"]
+            spatial.syngas_dri.locations = ["EU"]
+            # HBI - EU-wide
+            spatial.hbi.nodes = ["EU hbi"]
+            spatial.hbi.locations = ["EU"]           
+            # Scrap steel - EU-wide
+            spatial.scrap_steel.nodes = ["EU scrap steel"]
+            spatial.scrap_steel.locations = ["EU"]
+
+            spatial.co2.bf_bof.nodes = ["EU bf_bof process emissions"]
+            spatial.co2.bf_bof.locations = ["EU"]
+
+            spatial.co2.dri.nodes = ["EU dri process emissions"]
+            spatial.co2.dri.locations = ["EU"]
+
     return spatial
 
 
@@ -5024,54 +5086,832 @@ def add_industry(
             p_set=p_set,
         )
 
-    if industrial_demand[["coke", "coal"]].sum().sum() > 0:
-        add_carrier_buses(
-            n,
-            carrier="coal",
-            costs=costs,
-            spatial=spatial,
-            options=options,
-            cf_industry=cf_industry,
+    # Always add coal-for-industry buses/loads (even if zero demand) to keep indexing consistent across years.
+    add_carrier_buses(
+        n,
+        carrier="coal",
+        costs=costs,
+        spatial=spatial,
+        options=options,
+        cf_industry=cf_industry,
+    )
+
+    mwh_coal_per_mwh_coke = 1.366  # from eurostat energy balance
+    p_set = (
+        industrial_demand["coal"]
+        + mwh_coal_per_mwh_coke * industrial_demand["coke"]
+    ) / nhours
+
+    p_set.rename(lambda x: x + " coal for industry", inplace=True)
+
+    if not options["regional_coal_demand"]:
+        p_set = p_set.sum()
+    
+    n.add(
+        "Bus",
+        spatial.coal.industry,
+        location=spatial.coal.demand_locations,
+        carrier="coal for industry",
+        unit="MWh_LHV",
+    )
+
+    n.add(
+        "Load",
+        spatial.coal.industry,
+        bus=spatial.coal.industry,
+        carrier="coal for industry",
+        p_set=p_set,
+    )
+
+    n.add(
+        "Link",
+        spatial.coal.industry,
+        bus0=spatial.coal.nodes,
+        bus1=spatial.coal.industry,
+        bus2="co2 atmosphere",
+        carrier="coal for industry",
+        p_nom_extendable=True,
+        efficiency2=costs.at["coal", "CO2 intensity"],
+    )
+
+def get_industrial_demand():
+    # import ratios [MWh/t_Material]
+    fn = snakemake.input.industry_sector_ratios
+    sector_ratios = pd.read_csv(fn, header=[0, 1], index_col=0)
+
+    # material demand per node and industry [kt/a]
+    fn = snakemake.input.industrial_production
+    nodal_production = pd.read_csv(fn, index_col=0) / 1e3  # kt/a -> Mt/a
+
+    nodal_sector_ratios = pd.concat(
+        {node: sector_ratios[node[:2]] for node in nodal_production.index}, axis=1
+    )
+
+    nodal_production_stacked = nodal_production.stack()
+    nodal_production_stacked.index.names = [None, None]
+
+    # final energy consumption per node and industry (TWh/a)
+    nodal_df = (nodal_sector_ratios.multiply(nodal_production_stacked)).T
+
+    return nodal_df
+
+
+def steel_inputs(options, investment_year):
+    
+    coal_input = 4.327 # MWh_coal/t_steel # Fraunhofer ISI Data
+    elec_input_bof = 0.344 # MWh el/t steel # Fraunhofer ISI Data
+    em_factor_bof = 1.99# tCO2/t_steel  # Fraunhofer ISI Data
+    em_factor_dri_ng = 0.85 # tCO2/t_steel  # Fraunhofer ISI Data
+    scrap_steel_eaf = 1.0 # t_scrap/t_steel  # Assumption
+    scrap_price = get(options["endo_industry"]["scrap_prompt_price"], investment_year) # EUR/t_steel
+    marginal_cost_eaf = (
+            scrap_price
+            * scrap_steel_eaf )
+
+    steel_input = pd.Series({"coal_input": coal_input,
+                    "elec_input_bof": elec_input_bof,
+                    "em_factor_bof": em_factor_bof,
+                    "emission factor": em_factor_bof,
+                    "em_factor_dri_ng": em_factor_dri_ng,
+                    "scrap_steel_eaf": scrap_steel_eaf,
+                    "marginal_cost_eaf": marginal_cost_eaf,})
+
+    steel_min_load = options["endo_industry"]["steel_min_load"]
+    dri_min_load = options["endo_industry"]["dri_min_load"]
+    steel_lifetime = options["endo_industry"]["lifetime"]
+
+    return steel_input, steel_min_load, dri_min_load, steel_lifetime, marginal_cost_eaf
+
+def add_steel_industry(
+  n,
+  costs,
+  pop_layout: pd.DataFrame,
+  options,
+  investment_year,
+):
+    # industrial demand [TWh/a]
+    industrial_demand = get_industrial_demand() * 1e6  # TWh/a -> MWh/a
+    endogenous_sectors = []
+    endo_cfg = options.get("endo_industry", {})
+    # add all three (keeps order)
+    endogenous_sectors.extend([
+        "Integrated steelworks",
+        "DRI + Electric arc",
+        "Electric arc",
+    ])
+    # Adding carriers and components
+    nodes = pop_layout.index
+
+    n.add("Carrier", "iron")
+    
+    n.add(
+        "Bus",
+        spatial.iron.nodes,
+        location=spatial.iron.locations,
+        carrier="iron",
+        unit="t/yr",
+    )
+    endo = snakemake.params.sector["endo_industry"]
+
+    n.add(
+        "Generator",
+        spatial.iron.nodes,
+        bus=spatial.iron.nodes,
+        p_nom_extendable=True,
+        carrier="iron",
+        p_nom = 1e7,
+        marginal_cost=0,
+        # marginal_cost=costs.at["iron ore DRI-ready", "commodity"], # €/t of iron
+    )
+
+    # # Sweden local iron ore supply (simplified: no branching).
+    # n.add("Carrier", "se_iron")
+    # SE_IRON_CAP = 26e6  # t/yr
+    # SE_IRON_MC = 90     # EUR/t
+    # iron_nodes_list = list(spatial.iron.nodes if isinstance(spatial.iron.nodes, pd.Index) else spatial.iron.nodes)
+    # se_nodes = [n for n in iron_nodes_list if n.startswith("SE")] or iron_nodes_list[:1]
+    # n.add(
+    #     "Generator",
+    #     se_nodes,
+    #     suffix=" ore",
+    #     bus=se_nodes,
+    #     carrier="se_iron",
+    #     p_nom_extendable=True,
+    #     e_sum_max=SE_IRON_CAP,
+    #     marginal_cost=SE_IRON_MC,
+    # )
+
+    n.add("Carrier", "hbi")
+    n.add(
+        "Bus",
+        spatial.hbi.nodes,
+        location=spatial.hbi.locations,
+        carrier="hbi",
+        unit="t/yr",
+    )
+    
+    n.add("Carrier", "scrap_steel")
+    n.add(
+        "Bus",
+        spatial.scrap_steel.nodes,
+        location=spatial.scrap_steel.locations,
+        carrier="scrap_steel",
+        unit="t/yr",
+    )
+    
+    scrap_prompt_price = get(endo["scrap_prompt_price"], investment_year)
+    if options["endo_industry"]["regional_steel_demand"]:
+        e_sum = (
+            scrap_steel_distribution
+            .loc[spatial.scrap_steel.locations]
+            .squeeze()
+            .rename(lambda loc: f"{loc} scrap steel")
+        )
+        # # Apply 10% increase for e_sum_max
+        # e_sum_max = e_sum * 1.1
+        n.add(
+            "Generator",
+            name=spatial.scrap_steel.nodes,                   # e.g. ["DE scrap steel", "FR scrap steel", …]
+            bus=spatial.scrap_steel.nodes,
+            carrier="scrap_steel",
+            p_nom_extendable=True,
+            e_sum_max = e_sum,
+            # marginal_cost = scrap_prompt_price,  # €/t of scrap steel
         )
 
-        mwh_coal_per_mwh_coke = 1.366  # from eurostat energy balance
-        p_set = (
-            industrial_demand["coal"]
-            + mwh_coal_per_mwh_coke * industrial_demand["coke"]
-        ) / nhours
-
-        p_set.rename(lambda x: x + " coal for industry", inplace=True)
-
-        if not options["regional_coal_demand"]:
-            p_set = p_set.sum()
+    else:
+        # EU-WIDE SCRAP: single Generator, one annual cap
+        total_scrap = scrap_steel_distribution.sum().item()        # sum over all regions
 
         n.add(
-            "Bus",
-            spatial.coal.industry,
-            location=spatial.coal.demand_locations,
-            carrier="coal for industry",
-            unit="MWh_LHV",
+            "Generator",
+            name=spatial.scrap_steel.nodes[0],               # "EU scrap steel"
+            bus=spatial.scrap_steel.nodes[0],
+            carrier="scrap_steel",
+            p_nom_extendable=True,
+            e_sum_max=total_scrap,
+            # marginal_cost= 0, # €/t of scrap steel
         )
+
+    n.add("Carrier", "steel")
+
+    n.add(
+        "Bus",
+        spatial.steel.nodes,
+        location=spatial.steel.locations,
+        carrier="steel",
+        unit="t/yr", # def add_carrier_buses----When unit=Uni then it means     unit = "MWh_LHV" if carrier == "gas" else "MWh_th" 
+    )
+
+
+    # Steel demand (loads) ---------------------------------------------------
+    # Build steel loads only if endogenous industry module is enabled.
+    if options["endo_industry"]["enable"]:
+        steel_totals = (
+            steel_production[["Primary Steel", "Secondary Steel"]]
+            .sum(axis=1)              # combine primary + secondary
+            .clip(lower=0)            # no negative values
+            .fillna(0)                # replace missing with 0
+        )
+
+        if options["endo_industry"]["regional_steel_demand"]:
+            # Regional mode: assign steel loads to all nodes
+            steel_totals_local = steel_totals.reindex(spatial.steel.locations, fill_value=0)
+            steel_totals_local.index = pd.Index(spatial.steel.nodes)
+            p_set = steel_totals_local / nhours
+            p_set = p_set[p_set > 0]
+            if not p_set.empty:
+                n.add(
+                    "Load",
+                    name=p_set.index,
+                    bus=p_set.index,
+                    carrier="steel",
+                    p_set=p_set,
+                )
+        else:
+            # Aggregated (non-regional) mode: assign total steel load only to the first (EU) node
+            # Do NOT reindex to all nodes here!
+            p_set = steel_totals.sum() / nhours
+            if p_set > 0:
+                n.add(
+                    "Load",
+                    name=spatial.steel.nodes[0],
+                    bus=spatial.steel.nodes[0],
+                    carrier="steel",
+                    p_set=p_set,
+                )
+    
+
+    
+    if endo_cfg.get("green_import", False):    
+    
+        n.add("Carrier", "steel_import")
+        
+        if isinstance(p_set, pd.Series):
+            steel_regions = p_set[p_set > 0].index.tolist() 
+        else:
+            steel_regions = [spatial.steel.nodes[0]]
+
+        steel_import_price = get(endo["steel_import_price"], investment_year)
 
         n.add(
-            "Load",
-            spatial.coal.industry,
-            bus=spatial.coal.industry,
-            carrier="coal for industry",
-            p_set=p_set,
+            "Generator",
+            steel_regions,
+            suffix=" import",
+            bus=steel_regions,
+            carrier="steel_import",
+            p_nom = 1e7,
+            marginal_cost=steel_import_price,   # €/t steel at the steel bus
+        )
+        
+        n.add("Carrier", "hbi_import")
+        
+        hbi_import_price = get(endo["hbi_import_price"], investment_year)
+        
+        n.add(
+            "Generator",
+            spatial.hbi.nodes,
+            suffix=" import",
+            bus=spatial.hbi.nodes,
+            carrier="hbi_import",
+            p_nom = 1e7,
+            marginal_cost=hbi_import_price,   # €/t steel at the steel bus
+        )
+   
+    # add CO2 process from steel industry
+    n.add("Carrier", "steel process emissions")
+    n.add(
+        "Bus",
+        spatial.co2.bf_bof.nodes,
+        location=spatial.co2.bf_bof.locations,
+        carrier="steel process emissions",
+        unit="t_co2",
+    )
+    n.add(
+        "Bus",
+        spatial.co2.dri.nodes,
+        location=spatial.co2.dri.locations,
+        carrier="steel process emissions",
+        unit="t_co2",
+    )
+    
+    n.add("Carrier", "syn gas for DRI")
+    n.add(
+        "Bus",
+        spatial.syngas_dri.nodes,
+        location=spatial.syngas_dri.locations,
+        carrier="syn gas for DRI",
+        unit="unit",
+    )
+    
+
+
+    # If flexibility is enabled for endo_industry, explicitly add
+    # store components so the sector has storages available for
+    # flexible operation. When `flexibility: true` in the config
+    # these stores will be added.
+    if endo_cfg.get("flexibility", False):
+        # hbi store
+        n.add(
+            "Store",
+            spatial.hbi.nodes,
+            bus=spatial.hbi.nodes,
+            e_nom_extendable=True,
+            e_cyclic=True,
+            carrier="hbi",
+        )
+        # steel store
+        n.add(
+            "Store",
+            spatial.steel.nodes,
+            bus=spatial.steel.nodes,
+            carrier="steel",
+            e_nom_extendable=True,
+            e_cyclic=True,
+        )
+    
+    # Relocation Links -------------------------------------------------------  
+    
+    global_reloc_enable = bool(endo_cfg.get("enable", False))
+    steel_flag = bool(endo_cfg.get("steel_relocation", False))
+    hbi_flag = bool(endo_cfg.get("hbi_relocation", False))
+
+    steel_reloc_enabled = global_reloc_enable and steel_flag
+    hbi_reloc_enabled = global_reloc_enable and hbi_flag
+
+    relocation_specs = []
+    if steel_reloc_enabled and len(spatial.steel.nodes) > 1:
+        relocation_specs.append(("steel", list(spatial.steel.nodes), "steel_relocation"))
+        n.add("Carrier", "steel_relocation")
+    if hbi_reloc_enabled and len(spatial.hbi.nodes) > 1:
+        relocation_specs.append(("hbi", list(spatial.hbi.nodes), "hbi_relocation"))
+        n.add("Carrier", "hbi_relocation")
+
+   
+    for carrier_name, node_list, flag in relocation_specs:
+        # Fallback (€/t) only used if a distance misses all bins
+        fallback_key  = f"relocation_fallback_rate_{carrier_name}"
+
+        names = []
+        bus0_list = []
+        bus1_list = []
+
+        # Build ordered O→D pairs (keep both directions)
+        for origin in node_list:
+            for dest in node_list:
+                if dest == origin:
+                    continue
+                names.append(f"{carrier_name} relocation: {origin} -> {dest}")
+                bus0_list.append(origin)
+                bus1_list.append(dest)
+
+        if not names:
+            continue
+
+        # --- ensure all relocation buses have valid (x,y) on n.buses ---
+        involved = pd.Index(pd.unique(bus0_list + bus1_list))
+        zones = involved.to_series().str.replace(
+            r"\s+(?:scrap\s+)?(steel|hbi)$", "", regex=True, case=False
         )
 
+        donors = []
+        bus_names = n.buses.index.to_series()
+        missing_zones = []
+        for z in zones:
+            # prefer exact zone bus "DE1"
+            if z in n.buses.index:
+                x, y = n.buses.at[z, "x"], n.buses.at[z, "y"]
+                if np.isfinite([x, y]).all() and not (x == 0.0 and y == 0.0):
+                    donors.append(z)
+                    continue
+            # fallback: first bus starting with "DE1 " that has coords
+            pick = None
+            cand_idx = bus_names[bus_names.str.startswith(z + " ")].index
+            for c in cand_idx:
+                x, y = n.buses.at[c, "x"], n.buses.at[c, "y"]
+                if np.isfinite([x, y]).all() and not (x == 0.0 and y == 0.0):
+                    pick = c
+                    break
+            if pick is None:
+                missing_zones.append(z)
+                donors.append(z)  # placeholder for alignment
+            else:
+                donors.append(pick)
+
+        if missing_zones:
+            raise KeyError(
+                "No coordinate donor found for zones: "
+                + ", ".join(sorted(set(missing_zones))[:10])
+                + (" …" if len(set(missing_zones)) > 10 else "")
+            )
+
+        # vectorised copy of (x,y) from donors to involved buses
+        n.buses.loc[involved, ["x", "y"]] = n.buses.loc[donors, ["x", "y"]].to_numpy(dtype=float)
+
+        # --- compute distances (km) ---
+        A = n.buses.loc[bus0_list, ["x", "y"]].to_numpy(dtype=float)  # (lon,lat)
+        B = n.buses.loc[bus1_list, ["x", "y"]].to_numpy(dtype=float)
+        distances_km = haversine_pts(A, B).tolist()
+
+        tiers_cfg = endo_cfg.get(
+            f"relocation_tier_rates_{carrier_name}",
+            {"0_200": 0.143, "200_500": 0.045, "500_inf": 0.012},
+        )
+
+        # Parse and sort tiers as (lo, hi, rate_per_km)
+        bins = []
+        for rng, rate in tiers_cfg.items():
+            lo_s, hi_s = rng.split("_")
+            lo = float(lo_s)
+            hi = np.inf if hi_s == "inf" else float(hi_s)
+            bins.append((lo, hi, float(rate)))  # €/t·km
+        bins.sort(key=lambda x: x[0])
+
+        dists = np.asarray(distances_km, dtype=float)
+
+        def piecewise_cost_km(d, bins):
+            """
+            d : float (distance in km)
+            bins : list of (lo, hi, rate_per_km) with lo, hi in km and rate in €/t·km
+
+            Returns total cost in €/t for transporting over distance d.
+            """
+            cost = 0.0
+            for lo, hi, rpkm in bins:
+                if d <= lo:
+                    break  # no more distance in this or later bins
+                # segment of the journey that lies in this bin
+                seg_start = lo
+                seg_end = min(d, hi)
+                seg_len = seg_end - seg_start
+                if seg_len > 0:
+                    cost += rpkm * seg_len
+                if d <= hi:
+                    break
+            return cost
+
+        marginal_costs = [piecewise_cost_km(d, bins) for d in dists]
+
+        # Optional: if some distance didn't fall in any bin (shouldn't happen if 0_* is present),
+        # you can fall back:
+        fallback_rate = float(endo_cfg.get(f"relocation_fallback_rate_{carrier_name}", 0.5))
+        for i, (d, c) in enumerate(zip(dists, marginal_costs)):
+            if c == 0.0:  # or np.isnan, depending on implementation
+                marginal_costs[i] = fallback_rate * d  # interpret fallback as €/t·km
+
+        # --- add the Links ---
         n.add(
             "Link",
-            spatial.coal.industry,
-            bus0=spatial.coal.nodes,
-            bus1=spatial.coal.industry,
-            bus2="co2 atmosphere",
-            carrier="coal for industry",
+            names,
+            bus0=bus0_list,
+            bus1=bus1_list,
+            carrier=f"{carrier_name}_relocation",
             p_nom_extendable=True,
-            efficiency2=costs.at["coal", "CO2 intensity"],
+            p_min_pu=0,
+            length_original=distances_km,         # km
+            marginal_cost=marginal_costs, # €/t (if link p is in t/h)
+            capital_cost=0, 
         )
 
+    # ------------------------------------------------------------------
+
+    steel_input, steel_min_load, dri_min_load, steel_lifetime, marginal_cost_eaf = steel_inputs(options, investment_year)
+    
+    marginal_cost = (
+            costs.at["iron ore DRI-ready", "commodity"]
+            * costs.at["blast furnace-basic oxygen furnace", "ore-input"]
+        )
+    
+    # Link 1:
+    n.add(
+        "Link",
+        nodes,
+        suffix=" BF-BOF",
+        bus0=spatial.iron.nodes,
+        bus1=spatial.steel.nodes,
+        bus2=spatial.coal.nodes,
+        bus3=nodes,
+        bus4=spatial.co2.bf_bof.nodes,
+        carrier="BF-BOF",
+        p_nom = 0,
+        p_nom_extendable=True,
+        p_min_pu=0,
+        capital_cost= costs.at["blast furnace-basic oxygen furnace", "capital_cost"]/costs.at["blast furnace-basic oxygen furnace", "ore-input"],
+        marginal_cost= marginal_cost,
+        efficiency=  1 / costs.at["blast furnace-basic oxygen furnace", "ore-input"],
+        efficiency2= - steel_input["coal_input"] / costs.at["blast furnace-basic oxygen furnace", "ore-input"] ,
+        efficiency3= - steel_input["elec_input_bof"] / costs.at["blast furnace-basic oxygen furnace", "ore-input"] , 
+        efficiency4=   steel_input["em_factor_bof"] / costs.at["blast furnace-basic oxygen furnace", "ore-input"],
+        lifetime= costs.at["blast furnace-basic oxygen furnace", "economic_lifetime"],
+    )
+
+    # Link 2:   
+    n.add(
+        "Link",
+        nodes,
+        suffix=" steel BOF process emis to atmosphere",
+        bus0=spatial.co2.bf_bof.nodes,
+        bus1="co2 atmosphere",
+        carrier="steel process emissions",
+        p_nom = 0,
+        p_nom_extendable=True,
+        p_min_pu=0,
+        capital_cost = 0,
+        efficiency=1,
+    )
+    
+
+    capture_rate = costs.at["steel carbon capture retrofit", "capture_rate"]
+    electricity_input=costs.at["cement capture", "compression-electricity-input"] + costs.at["cement capture", "electricity-input"] # MWh/t_CO2
+
+    capital_cost_bof_cc = (( costs.at["blast furnace-basic oxygen furnace", "capital_cost"]
+                        + costs.at["steel carbon capture retrofit", "capital_cost"]
+                        * steel_input["em_factor_bof"]
+                        * capture_rate) 
+                        / costs.at["blast furnace-basic oxygen furnace", "ore-input"]) 
+    
+    # Link 3:
+    n.add(
+        "Link",
+        nodes,
+        suffix=" BF-BOF CC",
+        bus0=spatial.iron.nodes,
+        bus1=spatial.steel.nodes,       
+        bus2=spatial.coal.nodes,
+        bus3=nodes,      
+        bus4="co2 atmosphere",
+        bus5=spatial.co2.nodes,
+        carrier="BF-BOF CC",
+        p_nom = 0,
+        p_nom_extendable=True,
+        p_min_pu=0,
+        capital_cost= capital_cost_bof_cc,
+        #overnight_cost= overnight_cost_bof_cc,
+        marginal_cost= marginal_cost,
+        efficiency=  1 / costs.at["blast furnace-basic oxygen furnace", "ore-input"],
+        efficiency2= - steel_input["coal_input"] / costs.at["blast furnace-basic oxygen furnace", "ore-input"] ,
+        efficiency3= - (( electricity_input * steel_input["em_factor_bof"] * capture_rate) + steel_input["elec_input_bof"] ) 
+                        / costs.at["blast furnace-basic oxygen furnace", "ore-input"] , 
+        efficiency4=   steel_input["em_factor_bof"] * (1- capture_rate)/ costs.at["blast furnace-basic oxygen furnace", "ore-input"],
+        efficiency5=   steel_input["em_factor_bof"] * capture_rate / costs.at["blast furnace-basic oxygen furnace", "ore-input"],
+        lifetime= costs.at["steel carbon capture retrofit", "lifetime"], 
+    )  
+
+
+    # Link 4:
+    n.add(
+        "Link",
+        nodes,
+        suffix=" syn gas DRI from CH4 ",
+        bus0=spatial.gas.nodes,
+        bus1=spatial.syngas_dri.nodes,
+        bus2=spatial.co2.dri.nodes,
+        carrier="DRI-HBI-HYBRID",
+        p_nom = 0,
+        p_nom_extendable=True,
+        p_min_pu=0,
+        capital_cost = 0,
+        efficiency= 1 / costs.at["natural gas direct iron reduction furnace", "gas-input"] ,
+        efficiency2= steel_input["em_factor_dri_ng"] 
+        / costs.at["natural gas direct iron reduction furnace", "gas-input"] , # tCO2 per unit of syngas,
+    )
+
+    # Link 5:    
+    n.add(
+        "Link",
+        nodes,
+        suffix=" steel DRI process emis to atmosphere",
+        bus0=spatial.co2.dri.nodes,
+        bus1="co2 atmosphere",
+        carrier="steel process emissions",
+        p_nom = 0,
+        p_nom_extendable=True,
+        p_min_pu=0,
+        capital_cost = 0,
+        efficiency=1,
+    )
+    
+    # Link 6:
+    n.add(
+        "Link",
+        nodes,
+        suffix=" syn gas DRI from H2",
+        bus0=nodes + " H2",
+        bus1=spatial.syngas_dri.nodes,
+        carrier="DRI-HBI-HYBRID",
+        p_nom = 0,
+        p_nom_extendable=True,
+        p_min_pu=0,
+        capital_cost = 0,
+        efficiency= 1 / costs.at["hydrogen direct iron reduction furnace", "hydrogen-input"],
+    )
+    
+    marginal_cost = (
+            costs.at["iron ore DRI-ready", "commodity"]
+            * costs.at["hydrogen direct iron reduction furnace", "ore-input"]
+        )
+    # Link 7: 
+    n.add(
+        "Link",
+        nodes,
+        suffix=" DRI-HBI-HYBRID", # DRI-EAF-HYBRID
+        bus0=spatial.iron.nodes,
+        bus1=spatial.hbi.nodes,
+        bus2=spatial.syngas_dri.nodes,  # in this process is the reducing agent, it is not burnt
+        bus3=nodes,
+        carrier="DRI-HBI-HYBRID",
+        p_nom = 0,
+        p_nom_extendable=True,
+        p_min_pu=0,
+        capital_cost= costs.at["hydrogen direct iron reduction furnace", "capital_cost"] / costs.at["hydrogen direct iron reduction furnace", "ore-input"] ,
+        #overnight_cost= costs.at["hydrogen direct iron reduction furnace", "investment"] / costs.at["hydrogen direct iron reduction furnace", "ore-input"] ,
+        marginal_cost= marginal_cost,
+        efficiency=  1 / costs.at["hydrogen direct iron reduction furnace", "ore-input"] ,
+        efficiency2= - 1 / costs.at["hydrogen direct iron reduction furnace", "ore-input"] , # one unit of dri gas
+        efficiency3= - costs.at["hydrogen direct iron reduction furnace", "electricity-input"] / costs.at["hydrogen direct iron reduction furnace", "ore-input"]  , #MWh electricity per kt iron
+        lifetime= steel_lifetime,
+    )
+ 
+    capital_cost_dri_ng_cc = (( costs.at["natural gas direct iron reduction furnace", "capital_cost"] 
+                            + costs.at["cement capture", "capital_cost"] 
+                            * steel_input["em_factor_dri_ng"]
+                            * capture_rate
+                            )/ costs.at["natural gas direct iron reduction furnace", "ore-input"])
+    
+    overnight_cost_dri_ng_cc = (( costs.at["natural gas direct iron reduction furnace", "investment"] 
+                            + costs.at["cement capture", "investment"] 
+                            * steel_input["em_factor_dri_ng"]
+                            * capture_rate
+                            )/ costs.at["natural gas direct iron reduction furnace", "ore-input"])
+    # Link 8:
+    n.add(
+        "Link",
+        nodes,
+        suffix=" DRI-HBI-NG CC", # DRI-EAF-HYBRID
+        bus0=spatial.iron.nodes,
+        bus1=spatial.hbi.nodes,
+        bus2=spatial.gas.nodes, 
+        bus3=nodes,
+        bus4="co2 atmosphere",
+        bus5=spatial.co2.nodes,
+        carrier="DRI-HBI-NG CC",
+        p_nom = 0,
+        p_nom_extendable=True,
+        p_min_pu=0,
+        capital_cost= capital_cost_dri_ng_cc,
+        #overnight_cost= overnight_cost_dri_ng_cc,
+        marginal_cost = marginal_cost,
+        efficiency=  1 / costs.at["natural gas direct iron reduction furnace", "ore-input"] ,
+        efficiency2= - costs.at["natural gas direct iron reduction furnace", "gas-input"] / costs.at["natural gas direct iron reduction furnace", "ore-input"] , # one unit of dri gas
+        efficiency3= - (costs.at["hydrogen direct iron reduction furnace", "electricity-input"] + ( electricity_input * steel_input["em_factor_dri_ng"] * capture_rate ))
+                        / costs.at["natural gas direct iron reduction furnace", "ore-input"]  , #MWh electricity per kt iron
+        efficiency4=  steel_input["em_factor_dri_ng"] * (1- capture_rate)/ costs.at["natural gas direct iron reduction furnace", "ore-input"],
+        efficiency5=  steel_input["em_factor_dri_ng"] * capture_rate / costs.at["natural gas direct iron reduction furnace", "ore-input"],
+        lifetime= costs.at["cement capture", "lifetime"],
+    )       
+
+
+    #Link 9:
+    n.add(
+        "Link",
+        nodes,
+        suffix=" HBI-EAF",
+        bus0=spatial.hbi.nodes,
+        bus1=spatial.steel.nodes,
+        bus2=nodes,
+        carrier="HBI-EAF",
+        p_nom = 0,
+        p_nom_extendable=True,
+        p_min_pu=0,
+        #p_nom_min=dri_min_load,
+        capital_cost= costs.at["electric arc furnace with hbi and scrap", "capital_cost"] / costs.at["electric arc furnace", "hbi-input"],
+        #overnight_cost= costs.at["electric arc furnace with hbi and scrap", "investment"] / costs.at["electric arc furnace", "hbi-input"],
+        efficiency=  1 /costs.at["electric arc furnace", "hbi-input"],
+        efficiency2 = - costs.at["electric arc furnace with hbi and scrap", "electricity-input"] /costs.at["electric arc furnace", "hbi-input"],
+        lifetime= steel_lifetime,
+    )
+
+    # Link 10:
+    n.add(
+        "Link",
+        nodes,
+        suffix=" EAF-SCRAP",
+        bus0=spatial.scrap_steel.nodes,
+        bus1=spatial.steel.nodes,
+        bus2=nodes,
+        carrier="EAF-SCRAP",
+        p_nom = 0,
+        p_nom_extendable=True,
+        p_min_pu=0,
+        capital_cost= costs.at["electric arc furnace", "capital_cost"] / steel_input["scrap_steel_eaf"] ,
+        #overnight_cost= costs.at["electric arc furnace", "investment"] / steel_input["scrap_steel_eaf"] ,
+        marginal_cost= marginal_cost_eaf / steel_input["scrap_steel_eaf"] ,
+        efficiency=  1 /steel_input["scrap_steel_eaf"],
+        efficiency2 = - costs.at["electric arc furnace", "electricity-input"] /steel_input["scrap_steel_eaf"],
+        lifetime= steel_lifetime,
+    )
+
+ 
+    
+    if isinstance(p_set, pd.Series):
+        steel_regions = p_set[p_set > 0].index.tolist()
+    else:
+        steel_regions = [spatial.steel.nodes[0]] if p_set > 0 else []
+        
+    if steel_regions and not (steel_reloc_enabled or hbi_reloc_enabled):
+
+        unwanted_steel = set(spatial.steel.nodes) - set(steel_regions)
+
+        # if you also restrict HBI to steel regions:
+        keep_hbi = {b.replace(" steel", " hbi") for b in steel_regions} & set(spatial.hbi.nodes)
+        unwanted_hbi = set(spatial.hbi.nodes) - keep_hbi
+
+        bus_cols = [c for c in n.links.columns if c.startswith("bus")]
+        mask_unwanted = n.links[bus_cols].isin(unwanted_steel | unwanted_hbi).any(axis=1)
+        drop_links = n.links.index[mask_unwanted]
+        n.remove("Link", drop_links)
+
+        
+    n.loads.loc[(n.loads.carrier == "steel") & (n.loads.p_set <= 0), "active"] = False
+    n.loads.loc[(n.loads.carrier == "hbi") & (n.loads.p_set <= 0), "active"] = False
+
+    adjust_industry_loads(n, nodes, industrial_demand, endogenous_sectors)
+
+def adjust_industry_loads(n, nodes, industrial_demand, endogenous_sectors):
+
+    remaining_sectors = ~industrial_demand.index.get_level_values(1).isin(
+        endogenous_sectors
+    )
+
+    remaining_demand = (
+        industrial_demand.loc[(nodes, remaining_sectors), :].groupby(level=0).sum()
+    )
+
+    # methane
+    gas_demand = (
+        remaining_demand.loc[:, "methane"]
+        .groupby(level=0)
+        .sum()
+        .rename(index=lambda x: x + " gas for industry")
+        / nhours
+    )
+    
+
+    n.loads.loc[gas_demand.index, "p_set"] = gas_demand.values
+
+    # coal
+    mwh_coal_per_mwh_coke = 1.366
+    coal_demand = (
+        (remaining_demand.loc[:, "coal"]
+         + mwh_coal_per_mwh_coke * remaining_demand.loc[:, "coke"])
+        .groupby(level=0)
+        .sum()
+        .rename(index=lambda x: x + " coal for industry")
+        / nhours
+    )
+    n.loads.loc[coal_demand.index, "p_set"] = coal_demand.values
+
+    # hydrogen
+    h2_demand = (
+        remaining_demand.loc[:, "hydrogen"]
+        .groupby(level=0)
+        .sum()
+        .rename(index=lambda x: x + " H2 for industry")
+        / nhours
+    )
+
+    n.loads.loc[h2_demand.index, "p_set"] = h2_demand.values
+
+    # heat
+    heat_demand = (
+        remaining_demand.loc[:, "heat"]
+        .groupby(level=0)
+        .sum()
+        .rename(index=lambda x: x + " low-temperature heat for industry")
+        / nhours
+    )
+    n.loads.loc[heat_demand.index, "p_set"] = heat_demand.values
+
+    # elec
+    elec_demand = (
+        remaining_demand.loc[:, "elec"]
+        .groupby(level=0)
+        .sum()
+        .rename(index=lambda x: x + " industry electricity")
+        / nhours
+    )
+    n.loads.loc[elec_demand.index, "p_set"] = elec_demand.values
+
+    # process emission
+    process_emissions = (
+        -remaining_demand.loc[:, "process emission"]
+        .groupby(level=0)
+        .sum()
+        .rename(index=lambda x: x + " process emissions")
+        / nhours
+    )
+
+    n.loads.loc[process_emissions.index, "p_set"] = process_emissions.values
 
 def add_aviation(
     n: pypsa.Network,
@@ -6397,6 +7237,14 @@ if __name__ == "__main__":
             spatial=spatial,
         )
 
+    endo_industry = options["endo_industry"]    
+    if endo_industry.get("enable", False):
+        industrial_production = pd.read_csv(snakemake.input.industrial_production, index_col=0) * 1e3 * nyears
+        steel_production = pd.read_csv(snakemake.input.steel_production, index_col=0) * 1e3 * nyears
+        scrap_steel_distribution = pd.read_csv(snakemake.input.scrap_steel_distribution, index_col=0) * 1e3 * nyears 
+        add_steel_industry(n,costs, pop_layout,options,investment_year)
+    
+    
     if options["heating"]:
         add_waste_heat(n, costs, options, cf_industry)
 

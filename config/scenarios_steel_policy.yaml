@@ -1,0 +1,280 @@
+# -*- coding: utf-8 -*-
+# SPDX-FileCopyrightText: : 2017-2023 The PyPSA-Eur Authors
+#
+# SPDX-License-Identifier: MIT
+
+# This file is used to define the scenarios that are run by snakemake. Each entry on the first level is a scenario. Each scenario can contain configuration overrides with respect to the config/config.yaml settings.
+#
+# Example
+#
+# custom-scenario: # name of the scenario
+#   electricity:
+#       renewable_carriers: [wind, solar] # override the list of renewable carriers
+
+
+# Reference scenario : No steel endogenization
+reference:
+  sector:
+    endo_industry:
+      enable: false
+      regional_steel_demand: false
+  industry:
+    dri_eaf_plants: true
+  clustering:
+    temporal:
+      resolution_sector: 365h # 144h #2190SEG # 365h # 720h
+
+no_regional_steel_demand:
+  sector:
+    endo_industry:
+      enable: true
+      regional_steel_demand: false
+
+regional_steel_demand_no_h2_network_39:
+  sector:
+    endo_industry:
+      enable: true
+      regional_steel_demand: true
+    H2_network: false
+
+# With Relocation and Regional Steel Demand enabled
+regional_steel_demand_relocation:
+  sector:
+    endo_industry:
+      enable: true
+      regional_steel_demand: true
+      steel_relocation: true
+
+# No Carbon Neutrality constraint with Regional Steel Demand
+no_carbon_neutrality_regional_steel_demand:
+  co2_budget:
+    2020: 0.720
+    2025: 0.648
+    2030: 0.450
+    2035: 0.350
+    2040: 0.250 
+    2045: 0.150
+    2050: 0.050
+  sector:
+    endo_industry:
+      enable: true
+      regional_steel_demand: true
+
+regional_steel_demand_39:
+  sector:
+    endo_industry:
+      enable: true
+      regional_steel_demand: true
+
+regional_steel_demand_39_CCS:
+  sector:
+    endo_industry:
+      enable: true
+      regional_steel_demand: true
+    H2_network: false
+    H2_retrofit: false
+  costs:
+    overwrites:
+      investment:
+        steel carbon capture retrofit: 1800000.0
+
+# Sensitivity scenario for thesis with no carbon neutrality constraint and CCS
+
+# Sequestration potential variations
+regional_steel_demand_39_Seq_200:
+  sector:
+    endo_industry:
+      enable: true
+      regional_steel_demand: true
+    co2_sequestration_potential:
+      2050: 200
+  costs:
+    overwrites:
+      investment:
+        steel carbon capture retrofit: 1875000.0
+  co2_budget:
+    2050: 0.050
+regional_steel_demand_39_Seq_250:
+  sector:
+    endo_industry:
+      enable: true
+      regional_steel_demand: true
+    co2_sequestration_potential:
+      2050: 250
+  costs:
+    overwrites:
+      investment:
+        steel carbon capture retrofit: 1875000.0
+  co2_budget:
+    2050: 0.050
+regional_steel_demand_39_Seq_300:
+  sector:
+    endo_industry:
+      enable: true
+      regional_steel_demand: true
+    co2_sequestration_potential:
+      2050: 300
+  costs:
+    overwrites:
+      investment:
+        steel carbon capture retrofit: 1875000.0
+  co2_budget:
+    2050: 0.050
+regional_steel_demand_39_Seq_350:
+  sector:
+    endo_industry:
+      enable: true
+      regional_steel_demand: true
+    co2_sequestration_potential:
+      2050: 350
+  costs:
+    overwrites:
+      investment:
+        steel carbon capture retrofit: 1875000.0
+  co2_budget:
+    2050: 0.050
+regional_steel_demand_39_Seq_400:
+  sector:
+    endo_industry:
+      enable: true
+      regional_steel_demand: true
+    co2_sequestration_potential:
+      2050: 400
+  costs:
+    overwrites:
+      investment:
+        steel carbon capture retrofit: 1875000.0
+  co2_budget:
+    2050: 0.050
+
+# CCS Investment cost variations
+
+regional_steel_demand_39_CCS_1500k:
+  sector:
+    endo_industry:
+      enable: true
+      regional_steel_demand: true
+    co2_sequestration_potential:
+      2050: 400
+  costs:
+    overwrites:
+      investment:
+        steel carbon capture retrofit: 1500000.0
+  co2_budget:
+    2050: 0.050
+
+regional_steel_demand_39_CCS_1875k:
+  sector:
+    endo_industry:
+      enable: true
+      regional_steel_demand: true
+    co2_sequestration_potential:
+      2050: 400
+  costs:
+    overwrites:
+      investment:
+        steel carbon capture retrofit: 1875000.0
+  co2_budget:
+    2050: 0.050
+regional_steel_demand_39_CCS_2250k:
+  sector:
+    endo_industry:
+      enable: true
+      regional_steel_demand: true
+    co2_sequestration_potential:
+      2050: 400      
+  costs:
+    overwrites:
+      investment:
+        steel carbon capture retrofit: 2250000.0
+  co2_budget:
+    2050: 0.050
+regional_steel_demand_39_CCS_2625k:
+  sector:
+    endo_industry:
+      enable: true
+      regional_steel_demand: true
+    co2_sequestration_potential:
+      2050: 400 
+  costs:
+    overwrites:
+      investment:
+        steel carbon capture retrofit: 2625000.0
+  co2_budget:
+    2050: 0.050
+regional_steel_demand_39_CCS_3000k:
+  sector:
+    endo_industry:
+      enable: true
+      regional_steel_demand: true
+    co2_sequestration_potential:
+      2050: 400 
+  costs:
+    overwrites:
+      investment:
+        steel carbon capture retrofit: 3000000.0
+  co2_budget:
+    2050: 0.050
+
+regional_steel_demand_39_hbi_relocation:
+  sector:
+    endo_industry:
+      enable: true
+      regional_steel_demand: true
+      hbi_relocation: true
+
+
+# Sensitivity scenario for thesis with carbon neutrality constraint
+
+# Sequestration potential variations
+regional_steel_demand_39_Seq_200_carbon_neutral:
+  sector:
+    endo_industry:
+      enable: true
+      regional_steel_demand: true
+    co2_sequestration_potential:
+      2050: 400
+  costs:
+    overwrites:
+      investment:
+        steel carbon capture retrofit: 1875000.0
+  co2_budget:
+    2050: 0.000
+
+
+# Sensitivity scenario for thesis with carbon neutrality constraint and regional steel demand and no H2 network
+
+# Sequestration potential variations
+regional_steel_demand_39_Seq_200_no_h2_network_carbon_neutral:
+  sector:
+    endo_industry:
+      enable: true
+      regional_steel_demand: true
+    H2_network: false
+    co2_sequestration_potential:
+      2050: 400
+  costs:
+    overwrites:
+      investment:
+        steel carbon capture retrofit: 1875000.0
+  co2_budget:
+    2050: 0.000
+
+# Sensitivity scenario for thesis with carbon neutrality constraint and no regional steel demand
+
+# Sequestration potential variations
+no_regional_steel_demand_39_Seq_200:
+  sector:
+    endo_industry:
+      enable: true
+      regional_steel_demand: false
+    co2_sequestration_potential:
+      2050: 400
+  costs:
+    overwrites:
+      investment:
+        steel carbon capture retrofit: 1875000.0
+  co2_budget:
+    2050: 0.000
+
+

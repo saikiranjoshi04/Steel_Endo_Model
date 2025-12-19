@@ -18,6 +18,31 @@ logger = logging.getLogger(__name__)
 plt.style.use("bmh")
 
 
+
+def _set_planning_horizon_axis(ax, cols):
+    """Set x-axis ticks and label based on planning horizon entries in columns.
+
+    Parameters
+    ----------
+    ax : matplotlib Axes
+        Axis to modify.
+    cols : Index or MultiIndex
+        Columns from the (non-transposed) DataFrame before the .T.plot call.
+    """
+    try:
+        if isinstance(cols, pd.MultiIndex):
+            horizons = cols.get_level_values(-1)
+        else:
+            horizons = cols
+        labels = [str(h) for h in horizons]
+        ax.set_xticks(range(len(labels)))
+        ax.set_xticklabels(labels)
+        ax.set_xlabel("Year")
+    except Exception as e:  # pragma: no cover - defensive
+        logger.warning(f"Could not set planning horizon x-axis labels: {e}")
+        ax.set_xlabel("Year")
+
+
 # consolidate and rename
 
 preferred_order = pd.Index(
@@ -57,6 +82,12 @@ preferred_order = pd.Index(
         "battery storage",
         "hot water storage",
         "CO2 sequestration",
+        "primary route - blast furnace",
+        "primary route - blast furnace CC",
+        "primary route - DRI",
+        "primary route - DRI CC",
+        "primary route - DRI+EAF",
+        "secondary route - EAF",
     ]
 )
 
@@ -92,12 +123,15 @@ def plot_costs():
 
     fig, ax = plt.subplots(figsize=(12, 8))
 
-    df.loc[new_index].T.plot(
-        kind="bar",
-        ax=ax,
-        stacked=True,
-        color=[snakemake.params.plotting["tech_colors"][i] for i in new_index],
-    )
+    if df.empty:
+        ax.bar([], [])
+    else:
+        df.loc[new_index].T.plot(
+            kind="bar",
+            ax=ax,
+            stacked=True,
+            color=[snakemake.params.plotting["tech_colors"][i] for i in new_index],
+        )
 
     handles, labels = ax.get_legend_handles_labels()
 
@@ -106,9 +140,11 @@ def plot_costs():
 
     ax.set_ylim([0, snakemake.params.plotting["costs_max"]])
 
-    ax.set_ylabel("System Cost [EUR billion per year]")
+    # Removed per-year notation since each bar already represents a planning horizon
+    ax.set_ylabel("System Cost [EUR billion]")
 
-    ax.set_xlabel("")
+    # planning horizon x-axis
+    _set_planning_horizon_axis(ax, df.loc[new_index].columns)
 
     ax.grid(axis="x")
 
@@ -180,9 +216,10 @@ def plot_energy():
         ]
     )
 
-    ax.set_ylabel("Energy [TWh/a]")
+    ax.set_ylabel("Energy [TWh]")
 
-    ax.set_xlabel("")
+    # planning horizon x-axis
+    _set_planning_horizon_axis(ax, df.loc[new_index].columns)
 
     ax.grid(axis="x")
 
@@ -195,7 +232,9 @@ def plot_energy():
 
 
 def plot_balances():
-    co2_carriers = ["co2", "co2 stored", "process emissions"]
+    co2_carriers = ["co2", "co2 stored", "process emissions", "steel process emissions"]
+    # bus_carriers for which we do NOT want to display negative bars (only supply side)
+    steel_carriers = {"steel", "hbi", "iron", "scrap_steel"}
 
     balances_df = pd.read_csv(
         snakemake.input.balances, index_col=list(range(3)), header=list(range(n_header))
@@ -210,13 +249,46 @@ def plot_balances():
         # convert MWh to TWh
         df = df / 1e6
 
+        # For specified steel-related carriers:
+        # 1. Identify rows that have any positive contribution; only those will be kept (others were purely <=0)
+        # 2. Clip negatives to zero so only supply side remains in bars
+        # 3. Drop rows that would plot as all-zero bars to remove their legend entries
+        if bus_carrier in steel_carriers:
+            positive_mask = (df > 0).any(axis=1)
+            df = df.clip(lower=0)
+            df = df.loc[positive_mask]
+
         df = df.groupby(df.index.map(rename_techs)).sum()
 
-        to_drop = df.index[
-            df.abs().max(axis=1) < snakemake.params.plotting["energy_threshold"] / 10
-        ]
+        # Aggregate steel routes for all non-steel bus balances BEFORE threshold dropping
+        if bus_carrier not in steel_carriers:
+            # Use renamed technology names (post rename_techs) for aggregation matching
+            raw_steel_techs = [
+                "DRI-HBI-HYBRID",
+                "DRI-HBI-NG CC",
+                "HBI-EAF",
+                "BF-BOF",
+                "BF-BOF CC",
+                "EAF-SCRAP",
+            ]
+            renamed_steel_techs = [rename_techs(t) for t in raw_steel_techs]
+            present = [s for s in renamed_steel_techs if s in df.index]
+            if present:
+                aggregated_label = rename_techs("steel")
+                df.loc[aggregated_label] = df.loc[present].sum()
+                df = df.drop(present)
 
-        units = "MtCO2/a" if bus_carrier in co2_carriers else "TWh/a"
+        to_drop = df.index[
+            (df.abs().max(axis=1) < snakemake.params.plotting["energy_threshold"] / 100)
+            & (df.index != "steel")  # never drop aggregated steel
+        ]
+        # Select units for logging based on carrier category
+        if bus_carrier in co2_carriers:
+            units = "MtCO2"
+        elif bus_carrier in steel_carriers:
+            units = "Mt"
+        else:
+            units = "TWh"
         logger.debug(
             f"Dropping technology energy balance smaller than {snakemake.params['plotting']['energy_threshold'] / 10} {units}"
         )
@@ -231,32 +303,78 @@ def plot_balances():
         if df.empty:
             continue
 
-        new_index = preferred_order.intersection(df.index).append(
-            df.index.difference(preferred_order)
-        )
+        new_index = preferred_order.intersection(df.index).append(df.index.difference(preferred_order))
 
         new_columns = df.columns.sort_values()
 
         fig, ax = plt.subplots(figsize=(12, 8))
 
-        df.loc[new_index, new_columns].T.plot(
-            kind="bar",
-            ax=ax,
-            stacked=True,
-            color=[snakemake.params.plotting["tech_colors"][i] for i in new_index],
-        )
+        if bus_carrier in steel_carriers:
+            # --- Per-horizon stacked bars sorted by legend order (new_index) ---
+            tech_colors = snakemake.params.plotting["tech_colors"]
+            fallback = tech_colors.get("BF-BOF", "#666666")
+            threshold = snakemake.params.plotting.get("bar_label_threshold", 0.1)
 
+            seen = set()
+            for j, col in enumerate(new_columns):
+                # Use new_index order for stacking
+                s = df.loc[new_index, col].fillna(0)
+                bottom = 0.0
+                for tech, val in s.items():
+                    if val <= 0:
+                        continue  # skip zero-height slices in this year
+                    label = tech if tech not in seen else None
+                    ax.bar(
+                        j, val, bottom=bottom,
+                        color=tech_colors.get(tech, fallback),
+                        label=label,
+                        width=0.5  # Match pandas default bar width
+                    )
+                    if label is not None:
+                        seen.add(tech)
+                    # centered value label (like before)
+                    if val > threshold:
+                        ax.text(
+                            j, bottom + val / 2.0, f"{val:.1f}",
+                            ha="center", va="center", fontsize=12, color="white"
+                        )
+                    bottom += val
+
+        else:
+            # --- Keep existing behaviour for non-steel carriers ---
+            new_index = preferred_order.intersection(df.index).append(
+                df.index.difference(preferred_order)
+            )
+            tech_colors = snakemake.params.plotting["tech_colors"]
+            fallback = tech_colors.get("BF-BOF", "#666666")
+            colors = [tech_colors.get(i, fallback) for i in new_index]
+
+            df.loc[new_index, new_columns].T.plot(
+                kind="bar",
+                ax=ax,
+                stacked=True,
+                color=colors,
+            )
+        # x-axis labels by planning horizon
+        _set_planning_horizon_axis(ax, new_columns)
+
+        # legend, axes labels, savefig ... (your existing code)
         handles, labels = ax.get_legend_handles_labels()
-
-        handles.reverse()
-        labels.reverse()
+        handles.reverse(); labels.reverse()
 
         if bus_carrier in co2_carriers:
-            ax.set_ylabel("CO2 [MtCO2/a]")
+            ax.set_ylabel("CO2 [MtCO2]")
+        elif bus_carrier == "steel":
+            ax.set_ylabel("Production [Mt of crude steel]")
+        elif bus_carrier == "hbi":
+            ax.set_ylabel("Production [Mt of HBI]")    
+        elif bus_carrier in steel_carriers:
+            ax.set_ylabel("Consumption [Mt]")
         else:
-            ax.set_ylabel("Energy [TWh/a]")
+            ax.set_ylabel("Energy [TWh]")
 
-        ax.set_xlabel("")
+        # planning horizon x-axis
+        _set_planning_horizon_axis(ax, df.loc[new_index, new_columns].columns)
 
         ax.grid(axis="x")
 
@@ -419,7 +537,7 @@ def plot_carbon_budget_distribution(input_eurostat, options):
     plt.figure(figsize=(10, 7))
     gs1 = gridspec.GridSpec(1, 1)
     ax1 = plt.subplot(gs1[0, 0])
-    ax1.set_ylabel("CO$_2$ emissions \n [Gt per year]", fontsize=22)
+    ax1.set_ylabel("CO$_2$ emissions \n [Gt]", fontsize=22)
     # ax1.set_ylim([0, 5])
     ax1.set_xlim([1990, snakemake.params.planning_horizons[-1] + 1])
 

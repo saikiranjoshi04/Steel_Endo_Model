@@ -219,6 +219,9 @@ def build_nodal_distribution_key(
     sectors = hotmaps.Subsector.unique()
 
     keys = pd.DataFrame(index=regions.index, columns=sectors, dtype=float)
+    
+    # store raw steel process capacities only (keep simple)
+    numerators = pd.DataFrame(index=regions.index)
 
     pop = pd.read_csv(snakemake.input.clustered_pop_layout, index_col=0)
     pop["country"] = pop.index.str[:2]
@@ -289,13 +292,7 @@ def build_nodal_distribution_key(
                 "construction",
                 "operating",
                 "operating pre-retirement",
-                "retired",
                 "announced",
-            ]
-            sel = [
-                "Nominal BOF steel capacity (ttpa)",
-                "Nominal OHF steel capacity (ttpa)",
-                "Nominal iron capacity (ttpa)",
             ]
             status_filter = facilities["Capacity operating status"].isin(status_list)
             retirement_filter = facilities["Retired Date"].isna() | facilities[
@@ -305,14 +302,28 @@ def build_nodal_distribution_key(
                 facilities["Start date"].isna()
                 & ~facilities["Capacity operating status"].eq("announced")
             ) | facilities["Start date"].le(2030)
-            capacities = (
-                facilities.loc[status_filter & retirement_filter & start_filter, sel]
-                .sum(axis=1)
-                .dropna()
-            )
+            # Use difference (iron - DRI) capacity, clipped at zero
+            filt = status_filter & retirement_filter & start_filter
+            iron_series = facilities.loc[filt, "Nominal iron capacity (ttpa)"].fillna(0)
+            dri_series = facilities.loc[filt, "Nominal DRI capacity (ttpa)"].fillna(0)
+            diff = iron_series - dri_series
+            
+            # Piecewise rule:
+            # iron > DRI      -> capacity = iron - DRI
+            # iron == DRI > 0 -> capacity = iron
+            # iron < DRI      -> capacity = DRI (use DRI value)
+            # iron == DRI == 0 -> excluded
+            capacities = pd.Series(0.0, index=iron_series.index)
+            gt_mask = iron_series > dri_series
+            eq_mask = (iron_series == dri_series) & (iron_series > 0)
+            lt_mask = iron_series < dri_series
+            capacities.loc[gt_mask] = (iron_series - dri_series).loc[gt_mask]
+            capacities.loc[eq_mask] = iron_series.loc[eq_mask]
+            capacities.loc[lt_mask] = dri_series.loc[lt_mask]
+            # drop zeros (including iron==DRI==0)
+            capacities = capacities[capacities > 0]
         elif process == "Integrated steelworks":
             status_list = [
-                "construction",
                 "operating",
                 "operating pre-retirement",
                 "retired",
@@ -320,6 +331,7 @@ def build_nodal_distribution_key(
             sel = [
                 "Nominal BOF steel capacity (ttpa)",
                 "Nominal OHF steel capacity (ttpa)",
+                "Nominal DRI capacity (ttpa)",
             ]
             capacities = (
                 facilities.loc[
@@ -343,10 +355,17 @@ def build_nodal_distribution_key(
                 key = capacities / capacities.sum()
             buses = facilities.loc[capacities.index, "bus"]
             key = key.groupby(buses).sum().reindex(regions_ct, fill_value=0.0)
+            # record raw summed capacity per bus for later export
+            raw_bus = capacities.groupby(buses).sum().reindex(regions_ct, fill_value=0.0)
         else:
             key = keys.loc[regions_ct, "population"]
+            raw_bus = pd.Series(0.0, index=regions_ct)
 
         keys.loc[regions_ct, process] = key
+        numerators[f"{process}_capacity"] = numerators.get(
+            f"{process}_capacity", pd.Series(0.0, index=keys.index)
+        )
+        numerators.loc[regions_ct, f"{process}_capacity"] = raw_bus
 
     # add ammonia
     for country in countries:
@@ -368,7 +387,12 @@ def build_nodal_distribution_key(
 
         keys.loc[regions_ct, "Ammonia"] = key
 
-    return keys
+    # append steel process capacity columns at end
+    out = pd.concat([keys, numerators], axis=1)
+    steel_capacity_cols = [f"{p}_capacity" for p in steel_processes]
+    other_cols = [c for c in out.columns if c not in steel_capacity_cols]
+    out = out[other_cols + steel_capacity_cols]
+    return out
 
 
 if __name__ == "__main__":

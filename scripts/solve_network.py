@@ -1138,6 +1138,179 @@ def add_import_limit_constraint(n: pypsa.Network, sns: pd.DatetimeIndex):
 
     n.model.add_constraints(lhs, limit_sense, rhs, name="import_limit")
 
+def add_min_local_steel_share(n, relocation_suffix="_relocation"):
+    """
+    Enforce minimum 'local production share' of steel on:
+      1) countries (DE, FR, ...) via sector.endo_industry.steel_local_min_share
+      2) specific steel buses (e.g. DEA12) via sector.endo_industry.steel_local_min_bus_share
+
+    For each *group* G (country or single bus):
+        sum_t w_t * sum_{links with bus1 in G and NOT relocation} [ p_link(t) * efficiency(link) ]
+        >= share(G) * annual steel demand(G)
+
+    Notes
+    -----
+    - G for country = all steel buses whose first token encodes that country (e.g. 'DEA12 ...' -> 'DE').
+    - G for bus     = just that single steel bus (e.g. 'DEA12 steel').
+    - Demand(G) uses loads with carrier == 'steel' connected to buses in G.
+    - Excludes relocation flows: any link with carrier containing `relocation_suffix`.
+    - Must be called after variables are built (i.e. after `n.optimize.create_model()` in PyPSA-Eur).
+    """
+
+    # Read config
+    endo = (getattr(n, "config", {}) or {}).get("sector", {}).get("endo_industry", {}) or {}
+
+    if not endo.get("steel_relocation", False):
+        logger.info("steel_relocation is not enabled; skipping Minimum Local Steel share per country/Node.")
+        return
+
+    share_cfg = endo.get("steel_local_min_share", None)               # float or dict with DEFAULT/CC overrides
+    bus_share_cfg = endo.get("steel_local_min_bus_share", {}) or {}   # dict {NUTS3 token (e.g. 'DEA12'): share}
+
+    if share_cfg is None and not bus_share_cfg:
+        logger.info("No steel_local_min_share or steel_local_min_bus_share configured; skipping.")
+        return
+
+    # --- identify steel buses
+    steel_buses = n.buses.index.to_series()
+    steel_buses = steel_buses[steel_buses.str.endswith(" steel", na=False)]
+    if steel_buses.empty:
+        logger.info("No '... steel' buses found; skipping local share constraints.")
+        return
+
+    # If there is only a single steel bus (e.g. EU-wide), country-level constraints make no sense
+    single_steel_bus = (steel_buses.size == 1)
+
+    # Map bus -> country code using the first token (e.g. 'DEA12' -> 'DE')
+    bus_df = steel_buses.to_frame(name="bus").reset_index(drop=True)
+    first_token = bus_df["bus"].str.split().str[0]
+    # Prefer 2-letter ISO at start, else fall back to first 2 chars
+    bus_df["country"] = first_token.str.extract(r"^([A-Z]{2})")[0].fillna(first_token.str[:2])
+
+    # Snapshots & weights
+    snaps = n.snapshots
+    w = n.snapshot_weightings.loc[snaps, "generators"]
+    w_xr = xr.DataArray(w.values, coords={"snapshot": snaps}, dims=("snapshot",))
+
+    # Access Link-p as xarray (linopy variable)
+    try:
+        p_var = n.model["Link-p"]
+    except Exception as e:
+        logger.warning(f"Cannot access Link-p variable; did you build the model? {e}")
+        return
+
+    # Determine link dimension inline (previous helper _link_dim removed for simplicity).
+    for _d in p_var.dims:
+        if _d.lower() in ("link", "name"):
+            link_dim = _d
+            break
+    else:
+        for _c in getattr(p_var, "coords", []):
+            if _c.lower() in ("link", "name"):
+                link_dim = _c
+                break
+        else:
+            logger.warning(
+                f"No explicit link dimension ('link'/'name') found in Link-p dims {p_var.dims}; applying heuristic fallback."
+            )
+            link_dim = p_var.dims[1] if len(p_var.dims) > 1 else p_var.dims[0]
+
+    # Helpers
+    def _annual_demand_for_buses(buses):
+        # Load names connected to these steel buses
+        load_names = n.loads.index[(n.loads.carrier == "steel") & (n.loads.bus.isin(buses))]
+        if len(load_names) == 0:
+            return 0.0
+
+        if hasattr(n, "loads_t") and hasattr(n.loads_t, "p_set") and set(load_names) & set(n.loads_t.p_set.columns):
+            dem_ts = n.loads_t.p_set[load_names].sum(axis=1).reindex(index=snaps).fillna(0.0)
+            return float((dem_ts * w).sum())
+        else:
+            # fallback: constant p_set scaled by total weights
+            return float(n.loads.loc[load_names, "p_set"].sum()) * float(w.sum())
+
+    def _lhs_local_production_for_buses(buses):
+        # Links delivering steel into these buses at bus1, excluding relocation
+        link_mask = (n.links.bus1.isin(buses)) & (~n.links.carrier.fillna("").str.contains(relocation_suffix))
+        links = list(n.links.index[link_mask])
+        if not links:
+            return None
+
+        p_sel = p_var.sel(snapshot=snaps, **{link_dim: links})
+        eff = xr.DataArray(
+            n.links.loc[links, "efficiency"].fillna(1.0).values,
+            coords={link_dim: links}, dims=(link_dim,)
+        )
+        prod_snap = (p_sel * eff).sum(link_dim)  # xarray (snapshot) linear expression
+        lhs = (prod_snap * w_xr).sum()           # scalar linear expression
+        return lhs
+
+    def _add_group_constraint(group_name, buses, share):
+        share = float(share)
+        if share <= 0:
+            return
+
+        demand_annual = _annual_demand_for_buses(buses)
+        if demand_annual <= 0:
+            logger.info(f"Skipping {group_name}: zero steel demand.")
+            return
+
+        lhs = _lhs_local_production_for_buses(buses)
+        if lhs is None:
+            logger.info(f"Skipping {group_name}: no non-relocation links delivering steel to these buses.")
+            return
+
+        rhs = share * demand_annual
+        cname = f"min_steel_{group_name}"
+        n.model.add_constraints(lhs, ">=", rhs, name=cname)
+        logger.info(f"Added constraint {cname}: local steel >= {share:.2%} of annual demand.")
+
+    # --- 1) Country-level constraints
+    if share_cfg is not None and not single_steel_bus:
+        # Normalize config into per-country dict
+        if isinstance(share_cfg, (float, int)):
+            # one share for all countries present in the network
+            present_countries = sorted(bus_df["country"].unique())
+            country_shares = {ctry: float(share_cfg) for ctry in present_countries}
+        elif isinstance(share_cfg, dict):
+            default_share = float(share_cfg.get("DEFAULT", 0.0)) if "DEFAULT" in share_cfg else None
+            country_shares = {}
+            for ctry in sorted(bus_df["country"].unique()):
+                if ctry in share_cfg:
+                    country_shares[ctry] = float(share_cfg[ctry])
+                elif default_share is not None:
+                    country_shares[ctry] = default_share
+            # silently ignore countries with no DEFAULT and no explicit key
+        else:
+            raise TypeError("sector.endo_industry.steel_local_min_share must be float or dict.")
+
+        for ctry, group in bus_df.groupby("country"):
+            if ctry not in country_shares:
+                continue
+            buses = group["bus"].tolist()
+            _add_group_constraint(f"country_{ctry}", buses, country_shares[ctry])
+
+    # --- 2) Bus-level constraints (e.g. DEA12)
+    if bus_share_cfg:
+        # Map from short token -> full steel bus name present in the network
+        # Accept keys either as bare tokens ('DEA12') or full bus ids ('DEA12 steel')
+        steel_bus_set = set(steel_buses)
+        token_to_full = {}
+        for full in steel_buses:
+            tok = full.split()[0]
+            token_to_full[tok] = full
+
+        for key, share in bus_share_cfg.items():
+            if key in steel_bus_set:
+                target_bus = key
+            elif key in token_to_full:
+                target_bus = token_to_full[key]
+            else:
+                logger.warning(f"Configured steel_local_min_bus_share key '{key}' not found among steel buses; skipping.")
+                continue
+
+            _add_group_constraint(f"bus_{target_bus.split()[0]}", [target_bus], share)
+
 
 def add_co2_atmosphere_constraint(n, snapshots):
     glcs = n.global_constraints[n.global_constraints.type == "co2_atmosphere"]
@@ -1231,6 +1404,9 @@ def extra_functionality(
 
     if config["sector"]["imports"]["enable"]:
         add_import_limit_constraint(n, snapshots)
+    
+    if config["sector"]["endo_industry"]["enable"]:
+        add_min_local_steel_share(n)
 
     if n.params.custom_extra_functionality:
         source_path = n.params.custom_extra_functionality

@@ -20,6 +20,7 @@ from scripts._helpers import (
 
 configfile: "config/config.default.yaml"
 configfile: "config/plotting.default.yaml"
+configfile: "config/config.steel.yaml"
 
 
 if Path("config/config.yaml").exists():
@@ -82,44 +83,44 @@ if config["foresight"] == "perfect":
 rule all:
     input:
         expand(RESULTS + "graphs/costs.svg", run=config["run"]["name"]),
-        expand(resources("maps/power-network.pdf"), run=config["run"]["name"]),
-        expand(
-            resources("maps/power-network-s-{clusters}.pdf"),
-            run=config["run"]["name"],
-            **config["scenario"],
-        ),
-        expand(
-            RESULTS
-            + "maps/base_s_{clusters}_{opts}_{sector_opts}-costs-all_{planning_horizons}.pdf",
-            run=config["run"]["name"],
-            **config["scenario"],
-        ),
+        # expand(resources("maps/power-network.pdf"), run=config["run"]["name"]),
+        # expand(
+        #     resources("maps/power-network-s-{clusters}.pdf"),
+        #     run=config["run"]["name"],
+        #     **config["scenario"],
+        # ),
+        # expand(
+        #     RESULTS
+        #     + "maps/base_s_{clusters}_{opts}_{sector_opts}-costs-all_{planning_horizons}.pdf",
+        #     run=config["run"]["name"],
+        #     **config["scenario"],
+        # ),
         # COP profiles plots
-        expand(
-            RESULTS + "graphs/cop_profiles_s_{clusters}_{planning_horizons}.html",
-            run=config["run"]["name"],
-            **config["scenario"],
-        ),
-        lambda w: expand(
-            (
-                RESULTS
-                + "maps/base_s_{clusters}_{opts}_{sector_opts}-h2_network_{planning_horizons}.pdf"
-                if config_provider("sector", "H2_network")(w)
-                else []
-            ),
-            run=config["run"]["name"],
-            **config["scenario"],
-        ),
-        lambda w: expand(
-            (
-                RESULTS
-                + "maps/base_s_{clusters}_{opts}_{sector_opts}-ch4_network_{planning_horizons}.pdf"
-                if config_provider("sector", "gas_network")(w)
-                else []
-            ),
-            run=config["run"]["name"],
-            **config["scenario"],
-        ),
+        # expand(
+        #     RESULTS + "graphs/cop_profiles_s_{clusters}_{planning_horizons}.html",
+        #     run=config["run"]["name"],
+        #     **config["scenario"],
+        # ),
+        # lambda w: expand(
+        #     (
+        #         RESULTS
+        #         + "maps/base_s_{clusters}_{opts}_{sector_opts}-h2_network_{planning_horizons}.pdf"
+        #         if config_provider("sector", "H2_network")(w)
+        #         else []
+        #     ),
+        #     run=config["run"]["name"],
+        #     **config["scenario"],
+        # ),
+        # lambda w: expand(
+        #     (
+        #         RESULTS
+        #         + "maps/base_s_{clusters}_{opts}_{sector_opts}-ch4_network_{planning_horizons}.pdf"
+        #         if config_provider("sector", "gas_network")(w)
+        #         else []
+        #     ),
+        #     run=config["run"]["name"],
+        #     **config["scenario"],
+        # ),
         lambda w: expand(
             (
                 RESULTS + "csvs/cumulative_costs.csv"
@@ -137,86 +138,86 @@ rule all:
             run=config["run"]["name"],
             carrier=config_provider("plotting", "balance_map", "bus_carriers")(w),
         ),
-        expand(
-            RESULTS
-            + "graphics/balance_timeseries/s_{clusters}_{opts}_{sector_opts}_{planning_horizons}",
-            run=config["run"]["name"],
-            **config["scenario"],
-        ),
-        expand(
-            RESULTS
-            + "graphics/heatmap_timeseries/s_{clusters}_{opts}_{sector_opts}_{planning_horizons}",
-            run=config["run"]["name"],
-            **config["scenario"],
-        ),
-        # Explicitly list heat source types for temperature maps
-        lambda w: expand(
-            (
-                RESULTS
-                + "maps/base_s_{clusters}_{opts}_{sector_opts}_{planning_horizons}-heat_source_temperature_map_river_water.html"
-                if config_provider("plotting", "enable_heat_source_maps")(w)
-                and "river_water"
-                in config_provider("sector", "heat_pump_sources", "urban central")(w)
-                else []
-            ),
-            **config["scenario"],
-            run=config["run"]["name"],
-        ),
-        lambda w: expand(
-            (
-                RESULTS
-                + "maps/base_s_{clusters}_{opts}_{sector_opts}_{planning_horizons}-heat_source_temperature_map_sea_water.html"
-                if config_provider("plotting", "enable_heat_source_maps")(w)
-                and "sea_water"
-                in config_provider("sector", "heat_pump_sources", "urban central")(w)
-                else []
-            ),
-            **config["scenario"],
-            run=config["run"]["name"],
-        ),
-        lambda w: expand(
-            (
-                RESULTS
-                + "maps/base_s_{clusters}_{opts}_{sector_opts}_{planning_horizons}-heat_source_temperature_map_ambient_air.html"
-                if config_provider("plotting", "enable_heat_source_maps")(w)
-                and "air"
-                in config_provider("sector", "heat_pump_sources", "urban central")(w)
-                else []
-            ),
-            **config["scenario"],
-            run=config["run"]["name"],
-        ),
-        # Only river_water has energy maps
-        lambda w: expand(
-            (
-                RESULTS
-                + "maps/base_s_{clusters}_{opts}_{sector_opts}_{planning_horizons}-heat_source_energy_map_river_water.html"
-                if config_provider("plotting", "enable_heat_source_maps")(w)
-                and "river_water"
-                in config_provider("sector", "heat_pump_sources", "urban central")(w)
-                else []
-            ),
-            **config["scenario"],
-            run=config["run"]["name"],
-        ),
-        expand(
-            RESULTS
-            + "graphics/balance_timeseries/s_{clusters}_{opts}_{sector_opts}_{planning_horizons}",
-            run=config["run"]["name"],
-            **config["scenario"],
-        ),
-        expand(
-            RESULTS
-            + "graphics/heatmap_timeseries/s_{clusters}_{opts}_{sector_opts}_{planning_horizons}",
-            run=config["run"]["name"],
-            **config["scenario"],
-        ),
-        expand(
-            RESULTS
-            + "graphics/interactive_bus_balance/s_{clusters}_{opts}_{sector_opts}_{planning_horizons}",
-            run=config["run"]["name"],
-            **config["scenario"],
-        ),
+        # expand(
+        #     RESULTS
+        #     + "graphics/balance_timeseries/s_{clusters}_{opts}_{sector_opts}_{planning_horizons}",
+        #     run=config["run"]["name"],
+        #     **config["scenario"],
+        # ),
+        # expand(
+        #     RESULTS
+        #     + "graphics/heatmap_timeseries/s_{clusters}_{opts}_{sector_opts}_{planning_horizons}",
+        #     run=config["run"]["name"],
+        #     **config["scenario"],
+        # ),
+        # # Explicitly list heat source types for temperature maps
+        # lambda w: expand(
+        #     (
+        #         RESULTS
+        #         + "maps/base_s_{clusters}_{opts}_{sector_opts}_{planning_horizons}-heat_source_temperature_map_river_water.html"
+        #         if config_provider("plotting", "enable_heat_source_maps")(w)
+        #         and "river_water"
+        #         in config_provider("sector", "heat_pump_sources", "urban central")(w)
+        #         else []
+        #     ),
+        #     **config["scenario"],
+        #     run=config["run"]["name"],
+        # ),
+        # lambda w: expand(
+        #     (
+        #         RESULTS
+        #         + "maps/base_s_{clusters}_{opts}_{sector_opts}_{planning_horizons}-heat_source_temperature_map_sea_water.html"
+        #         if config_provider("plotting", "enable_heat_source_maps")(w)
+        #         and "sea_water"
+        #         in config_provider("sector", "heat_pump_sources", "urban central")(w)
+        #         else []
+        #     ),
+        #     **config["scenario"],
+        #     run=config["run"]["name"],
+        # ),
+        # lambda w: expand(
+        #     (
+        #         RESULTS
+        #         + "maps/base_s_{clusters}_{opts}_{sector_opts}_{planning_horizons}-heat_source_temperature_map_ambient_air.html"
+        #         if config_provider("plotting", "enable_heat_source_maps")(w)
+        #         and "air"
+        #         in config_provider("sector", "heat_pump_sources", "urban central")(w)
+        #         else []
+        #     ),
+        #     **config["scenario"],
+        #     run=config["run"]["name"],
+        # ),
+        # # Only river_water has energy maps
+        # lambda w: expand(
+        #     (
+        #         RESULTS
+        #         + "maps/base_s_{clusters}_{opts}_{sector_opts}_{planning_horizons}-heat_source_energy_map_river_water.html"
+        #         if config_provider("plotting", "enable_heat_source_maps")(w)
+        #         and "river_water"
+        #         in config_provider("sector", "heat_pump_sources", "urban central")(w)
+        #         else []
+        #     ),
+        #     **config["scenario"],
+        #     run=config["run"]["name"],
+        # ),
+        # expand(
+        #     RESULTS
+        #     + "graphics/balance_timeseries/s_{clusters}_{opts}_{sector_opts}_{planning_horizons}",
+        #     run=config["run"]["name"],
+        #     **config["scenario"],
+        # ),
+        # expand(
+        #     RESULTS
+        #     + "graphics/heatmap_timeseries/s_{clusters}_{opts}_{sector_opts}_{planning_horizons}",
+        #     run=config["run"]["name"],
+        #     **config["scenario"],
+        # ),
+        # expand(
+        #     RESULTS
+        #     + "graphics/interactive_bus_balance/s_{clusters}_{opts}_{sector_opts}_{planning_horizons}",
+        #     run=config["run"]["name"],
+        #     **config["scenario"],
+        # ),
     default_target: True
 
 
