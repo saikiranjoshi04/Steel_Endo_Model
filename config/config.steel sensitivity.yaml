@@ -6,12 +6,10 @@
 run:
   prefix: ""
   name: #"all"
-  - reference
-  - regional_steel_demand_39
-  - no_regional_steel_demand
-  - regional_steel_demand_no_h2_network_39
-  - no_carbon_neutrality_regional_steel_demand
-  # - regional_steel_demand_39_CCS
+  - regional_steel_demand_39_Seq_200_carbon_neutral
+  - no_regional_steel_demand_39_Seq_200
+  - regional_steel_demand_39_Seq_200_no_h2_network_carbon_neutral
+  - regional_steel_demand_39_CCS_1875k
   scenarios:
     enable: true
     file: config/scenarios_steel_policy.yaml
@@ -22,7 +20,7 @@ run:
   shared_cutouts: true
 
 # docs in https://pypsa-eur.readthedocs.io/en/latest/configuration.html#foresight
-foresight: myopic
+foresight: overnight
 
 
 # docs in https://pypsa-eur.readthedocs.io/en/latest/configuration.html#scenario
@@ -39,12 +37,12 @@ scenario:
   sector_opts:
   - ''
   planning_horizons:
-  - 2020
-  - 2025
-  - 2030
-  - 2035
-  - 2040
-  - 2045
+  # - 2020
+  # - 2025
+  # - 2030
+  # - 2035
+  # - 2040
+  # - 2045
   - 2050
 
 # countries: ['DE']

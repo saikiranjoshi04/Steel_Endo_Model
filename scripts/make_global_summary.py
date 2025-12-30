@@ -27,6 +27,7 @@ INDEX_COLS = {
     "nodal_energy_balance": 4,
     "prices": 1,
     "weighted_prices": 1,
+    "nodal_weighted_prices": 2,
     "market_values": 1,
     "metrics": 1,
 }

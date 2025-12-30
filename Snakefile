@@ -22,7 +22,6 @@ configfile: "config/config.default.yaml"
 configfile: "config/plotting.default.yaml"
 configfile: "config/config.steel.yaml"
 
-
 if Path("config/config.yaml").exists():
 
     configfile: "config/config.yaml"
@@ -133,15 +132,15 @@ rule all:
             ),
             run=config["run"]["name"],
         ),
-        lambda w: expand(
-            (
-                RESULTS
-                + "maps/base_s_{clusters}_{opts}_{sector_opts}_{planning_horizons}-balance_map_{carrier}.pdf"
-            ),
-            **config["scenario"],
-            run=config["run"]["name"],
-            carrier=config_provider("plotting", "balance_map", "bus_carriers")(w),
-        ),
+        # lambda w: expand(
+        #     (
+        #         RESULTS
+        #         + "maps/base_s_{clusters}_{opts}_{sector_opts}_{planning_horizons}-balance_map_{carrier}.pdf"
+        #     ),
+        #     **config["scenario"],
+        #     run=config["run"]["name"],
+        #     carrier=config_provider("plotting", "balance_map", "bus_carriers")(w),
+        # ),
         # expand(
         #     RESULTS
         #     + "graphics/balance_timeseries/s_{clusters}_{opts}_{sector_opts}_{planning_horizons}",

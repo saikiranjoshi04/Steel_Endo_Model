@@ -64,6 +64,73 @@ sector:
   biomass_spatial: false
   biomass_to_liquid: false
   electrobiofuels: false
+  
+  regional_coal_demand: true  #set to true if regional CO2 constraints needed
+  endo_industry:    
+    enable: true
+    regional_steel_demand: true   # enable regional steel demand constraints
+    
+    existing_steel_plants:
+      fallback_start_year: 2000             # Fallback when both retired and start year missing but capacities are present for EAF and DRI plants
+      integrated_lookback_years: 39      # For Integrated steelworks: lookback years from retired date to infer start (retired - lookback)
+      integrated_fallback_start_year: 2001  # For Integrated steelworks: fallback start year when no retired date is available
+    
+    steel_relocation: false   # enable directional steel flow relocation links
+    hbi_relocation: false     # enable directional HBI flow relocation links
+    
+    # when steel relocation is active, these parameters define minimum local production shares
+    steel_local_min_share: #Minimum share of steel production enabled when steel relocation is active
+      DEFAULT: 0.3 # Global default minimum local share
+      DE: 0.5 # Country specific minimum local share
+    steel_local_min_bus_share:
+      DEA12: 0.6 # Bus specific minimum local share
+
+    steel_min_load: 0.5 # 50 % minimum load for BF/BOF steel plants
+    dri_min_load: 0.4  # 40 % minimum load for DRI plants
+    lifetime : 40 # lifetime for the steel plants built in the model
+
+    relocation_fallback_rate_steel: 0.5 # EUR/km 
+    relocation_tier_rates_steel: # https://www.kimnet.nl/site/binaries/site-content/collections/documents/2023/03/30/kostenkengetallen-voor-het-goederenvervoer/Cost%2Bfigures%2Bfor%2Bfreight%2Btransport_def.pdf
+      "0_200": 0.144
+      "200_500": 0.045
+      "500_inf": 0.012
+    
+    relocation_fallback_rate_hbi: 0.5
+    relocation_tier_rates_hbi:
+      "0_200": 0.144
+      "200_500": 0.045
+      "500_inf": 0.012
+    
+    flexibility : false   # Stores are added for HBI and Steel to provide flexibility
+    
+    # If green_import is True, steel_import_price and hbi_import_price will be used for import prices
+    green_import: false    
+    # assumed green import prices in EUR/t steel or HBI
+    steel_import_price:
+      2020: 450
+      2025: 525
+      2030: 550
+      2035: 650
+      2040: 650
+      2045: 675
+      2050: 700
+    hbi_import_price:
+      2020: 400
+      2025: 400
+      2030: 400
+      2035: 600
+      2040: 500
+      2045: 500
+      2050: 500
+    # assumed scrap prompt prices in EUR/t steel for Scrap based EAF production
+    scrap_prompt_price:
+      2020: 140
+      2025: 140
+      2030: 140
+      2035: 140
+      2040: 140
+      2045: 140
+      2050: 140
 
 electricity:
   extendable_carriers:
@@ -112,6 +179,26 @@ solving:
   mem: 4000
 
 plotting:
+  tech_colors:
+    # Steel production routes
+    primary route - blast furnace: "#C1663B"
+    primary route - blast furnace CC: "#E6B89C"
+    primary route - DRI: "#6a51a3"
+    primary route - DRI CC: "#98DF8A"
+    primary route - EAF(DRI based): "#1F9E89"
+    secondary route - EAF: "#1F77B4"
+    hbi: "#17BECF"
+    iron: "#9467BD"
+    se_iron: "#C5B0D5"
+    scrap_steel: "#7F7F7F"
+    import scrap steel: "#C7C7C7"
+    hbi_import: "#9EDAE5"
+    steel: "#E377C2"
+    steel_import: "#F7B6D2"
+    steel_relocation: "#F1A4C4"
+    hbi_relocation: "#BFD3E6"
+    steel process emissions: "#D62728"
+    syn gas for DRI: "#FF7F0E"
   map:
     boundaries:
   eu_node_location:

@@ -26,6 +26,7 @@ OUTPUTS = [
     "curtailment",
     "prices",
     "weighted_prices",
+    "nodal_weighted_prices",
     "market_values",
     "nodal_costs",
     "nodal_capacities",
@@ -282,6 +283,45 @@ def calculate_weighted_prices(n: pypsa.Network) -> pd.Series:
             weighted_prices[carrier] = a / b
 
     return pd.Series(weighted_prices).sort_index()
+
+
+def calculate_nodal_weighted_prices(n: pypsa.Network) -> pd.Series:
+    """
+    Calculate load-weighted prices per bus carrier and location.
+    """
+    carriers = n.buses.carrier.unique()
+    weights = n.snapshot_weightings.generators
+    bus_locations = n.buses.location
+
+    weighted_prices = {}
+
+    for carrier in carriers:
+        load = n.statistics.withdrawal(
+            groupby="bus",
+            aggregate_time=False,
+            bus_carrier=carrier,
+            aggregate_across_components=True,
+        ).T
+
+        if load.empty or load.sum().sum() <= 0:
+            continue
+
+        price = n.buses_t.marginal_price.loc[:, n.buses.carrier == carrier]
+        price = price.reindex(columns=load.columns, fill_value=0)
+
+        locations = bus_locations.reindex(load.columns).fillna("EU")
+        numer = (load * price).groupby(locations, axis=1).sum()
+        denom = load.groupby(locations, axis=1).sum()
+
+        num_w = weights @ numer
+        den_w = weights @ denom
+        den_w = den_w.where(den_w != 0)
+        wp = (num_w / den_w).dropna()
+
+        for location, value in wp.items():
+            weighted_prices[(location, carrier)] = value
+
+    return pd.Series(weighted_prices).rename_axis(["location", "carrier"]).sort_index()
 
 
 def calculate_market_values(n: pypsa.Network) -> pd.Series:

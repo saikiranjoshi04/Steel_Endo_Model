@@ -135,6 +135,57 @@ if config["foresight"] != "perfect":
         script:
             "../scripts/plot_balance_map.py"
 
+    rule plot_balances_overview:
+        params:
+            plotting=config_provider("plotting"),
+            scenario_names=config_provider("run", "name"),
+            results_root="results",
+        output:
+            overview=RESULTS + "plots/balances_overview_{carrier}.pdf",
+        threads: 1
+        resources:
+            mem_mb=8000,
+        log:
+            RESULTS + "logs/plot_balances_overview_{carrier}.log",
+        benchmark:
+            RESULTS + "benchmarks/plot_balances_overview_{carrier}",
+        script:
+            "../scripts/plot_balances_overview.py"
+
+    rule plot_investment_overview:
+        params:
+            plotting=config_provider("plotting"),
+            scenario_names=config_provider("run", "name"),
+            results_root="results",
+        output:
+            overview=RESULTS + "plots/investment_overview_{carrier}.pdf",
+        threads: 1
+        resources:
+            mem_mb=8000,
+        log:
+            RESULTS + "logs/plot_investment_overview_{carrier}.log",
+        benchmark:
+            RESULTS + "benchmarks/plot_investment_overview_{carrier}",
+        script:
+            "../scripts/plot_investment_overview.py"
+
+    rule plot_capital_cost_scenarios:
+        params:
+            plotting=config_provider("plotting"),
+            scenario_names=config_provider("run", "name"),
+            results_root="results",
+        output:
+            overview=RESULTS + "plots/capital_cost_difference.pdf",
+        threads: 1
+        resources:
+            mem_mb=8000,
+        log:
+            RESULTS + "logs/plot_capital_cost_scenarios.log",
+        benchmark:
+            RESULTS + "benchmarks/plot_capital_cost_scenarios",
+        script:
+            "../scripts/plot_capital_cost_scenarios.py"
+
     rule plot_heat_source_map:
         params:
             plotting=config_provider("plotting"),
@@ -232,6 +283,8 @@ rule make_summary:
         + "csvs/individual/prices_s_{clusters}_{opts}_{sector_opts}_{planning_horizons}.csv",
         weighted_prices=RESULTS
         + "csvs/individual/weighted_prices_s_{clusters}_{opts}_{sector_opts}_{planning_horizons}.csv",
+        nodal_weighted_prices=RESULTS
+        + "csvs/individual/nodal_weighted_prices_s_{clusters}_{opts}_{sector_opts}_{planning_horizons}.csv",
         market_values=RESULTS
         + "csvs/individual/market_values_s_{clusters}_{opts}_{sector_opts}_{planning_horizons}.csv",
         metrics=RESULTS
@@ -328,6 +381,12 @@ rule make_global_summary:
             **config["scenario"],
             allow_missing=True,
         ),
+        nodal_weighted_prices=expand(
+            RESULTS
+            + "csvs/individual/nodal_weighted_prices_s_{clusters}_{opts}_{sector_opts}_{planning_horizons}.csv",
+            **config["scenario"],
+            allow_missing=True,
+        ),
         market_values=expand(
             RESULTS
             + "csvs/individual/market_values_s_{clusters}_{opts}_{sector_opts}_{planning_horizons}.csv",
@@ -350,6 +409,7 @@ rule make_global_summary:
         curtailment=RESULTS + "csvs/curtailment.csv",
         prices=RESULTS + "csvs/prices.csv",
         weighted_prices=RESULTS + "csvs/weighted_prices.csv",
+        nodal_weighted_prices=RESULTS + "csvs/nodal_weighted_prices.csv",
         market_values=RESULTS + "csvs/market_values.csv",
         nodal_costs=RESULTS + "csvs/nodal_costs.csv",
         nodal_capacities=RESULTS + "csvs/nodal_capacities.csv",

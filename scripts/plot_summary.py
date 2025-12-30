@@ -86,7 +86,7 @@ preferred_order = pd.Index(
         "primary route - blast furnace CC",
         "primary route - DRI",
         "primary route - DRI CC",
-        "primary route - DRI+EAF",
+        "primary route - EAF(DRI based)",
         "secondary route - EAF",
     ]
 )

@@ -821,16 +821,12 @@ def add_steel_industry_existing(n: pypsa.Network, costs: pd.DataFrame):
         logger.info(
             "Adding %d BF-BOF plant Links (Integrated steelworks)", len(dfp)
         )
-
         names = _names(dfp)
         nodes = dfp.index.to_list()
-
         iron_bus = _bus(spatial.iron, nodes, "iron")
         steel_bus = _bus(spatial.steel, nodes, "steel")
         co2_bus = _bf_bof_co2_bus(nodes)
-
-        marginal_cost = (
-            costs.at["iron ore DRI-ready", "commodity"]
+        marginal_cost = (costs.at["iron ore DRI-ready", "commodity"]
             * costs.at["blast furnace-basic oxygen furnace", "ore-input"]
         )
 
@@ -858,10 +854,7 @@ def add_steel_industry_existing(n: pypsa.Network, costs: pd.DataFrame):
                 "blast furnace-basic oxygen furnace", "capital_cost"
             ]
             / costs.at["blast furnace-basic oxygen furnace", "ore-input"],
-            overnight_cost=costs.at[
-                "blast furnace-basic oxygen furnace", "investment"
-            ]
-            / costs.at["blast furnace-basic oxygen furnace", "ore-input"],
+
             marginal_cost=marginal_cost,
             efficiency=1
             / costs.at["blast furnace-basic oxygen furnace", "ore-input"],
@@ -922,10 +915,7 @@ def add_steel_industry_existing(n: pypsa.Network, costs: pd.DataFrame):
                 "hydrogen direct iron reduction furnace", "capital_cost"
             ]
             / costs.at["hydrogen direct iron reduction furnace", "ore-input"],
-            overnight_cost=costs.at[
-                "hydrogen direct iron reduction furnace", "investment"
-            ]
-            / costs.at["hydrogen direct iron reduction furnace", "ore-input"],
+
             marginal_cost=marginal_cost,
             efficiency=1
             / costs.at["hydrogen direct iron reduction furnace", "ore-input"],
@@ -971,8 +961,7 @@ def add_steel_industry_existing(n: pypsa.Network, costs: pd.DataFrame):
             # p_min_pu = dri_min_load,
             capital_cost=costs.at["electric arc furnace", "capital_cost"]
             / costs.at["electric arc furnace", "hbi-input"],
-            overnight_cost=costs.at["electric arc furnace", "investment"]
-            / costs.at["electric arc furnace", "hbi-input"],
+
             efficiency=1 / costs.at["electric arc furnace", "hbi-input"],
             efficiency2=-costs.at["electric arc furnace", "electricity-input"]
             / costs.at["electric arc furnace", "hbi-input"],
@@ -1129,7 +1118,6 @@ if __name__ == "__main__":
     if options.get("cluster_heat_buses", False):
         cluster_heat_buses(n)
     
-    pop_layout = pd.read_csv(snakemake.input.clustered_pop_layout, index_col=0)
     nhours = n.snapshot_weightings.generators.sum()
 
     if options["endo_industry"].get("enable"):

@@ -971,7 +971,7 @@ def rename_techs(label: str) -> str:
         "B2B": "transmission lines",
         "DRI-HBI-HYBRID": "primary route - DRI",
         "DRI-HBI-NG CC": "primary route - DRI CC",
-        "HBI-EAF": "primary route - DRI+EAF",
+        "HBI-EAF": "primary route - EAF(DRI based)",
         "BF-BOF": "primary route - blast furnace",
         "BF-BOF CC": "primary route - blast furnace CC",
         "EAF-SCRAP": "secondary route - EAF",

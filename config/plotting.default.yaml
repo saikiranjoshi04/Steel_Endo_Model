@@ -145,17 +145,17 @@ plotting:
       unit: TWh
       unit_conversion: 1_000_000
       cmap: Blues
-      vmin: 30
-      vmax: 130
+      vmin:
+      vmax:
       region_unit: €/MWh
       bus_factor: 0.002
       branch_factor: 0.07
       flow_factor: 50
       bus_sizes:
-      - 50
-      - 25
+      - 250
+      - 100
       branch_sizes:
-      - 40
+      - 50
       - 20
     co2 stored:
       unit: Mt
@@ -261,6 +261,9 @@ plotting:
     load: "Load Shedding"
     ac: "AC"
     dc: "DC"
+    HBI-EAF H2-based: "primary route - DRI+EAF H2-based"
+    HBI-EAF NG-based: "primary route - DRI+EAF NG-based"
+    DRI-NG-CC-HBI-EAF: "primary route - DRI+EAF NG CC-based"
 
   tech_colors:
     # wind
@@ -318,6 +321,10 @@ plotting:
     allam: '#B98F76'
     gas for industry co2 to atmosphere: '#692e0a'
     gas for industry co2 to stored: '#8a3400'
+    # steel
+    HBI-EAF H2-based: '#98DF8A'
+    HBI-EAF NG-based: '#ff7f0e'
+    DRI-NG-CC-HBI-EAF: '#98DF8A'
     gas for industry: '#853403'
     gas for industry CC: '#692e0a'
     gas pipeline: '#ebbca0'
@@ -589,3 +596,26 @@ plotting:
     import NH3: '#e2ed74'
     import oil: '#93eda2'
     import methanol: '#87d0e6'
+
+  scenario_nice_names:
+    all: "All"
+    no_carbon_neutrality_regional_steel_demand: "RS No Policy"
+    no_regional_steel_demand: "No RS"
+    no_regional_steel_demand_39_Seq_200: "No Regional Seq 200"
+    reference: "Ref"
+    regional_steel_demand_39: "RS"
+    regional_steel_demand_no_h2_network_39: "RS No H2 Net"
+    regional_steel_demand_39_CCS: "Reg CCS"
+    regional_steel_demand_39_CCS_1500k: "Regional 39 CCS 1500k"
+    regional_steel_demand_39_CCS_1875k: "Regional 39 CCS 1875k"
+    regional_steel_demand_39_CCS_2250k: "Regional 39 CCS 2250k"
+    regional_steel_demand_39_CCS_2625k: "Regional 39 CCS 2625k"
+    regional_steel_demand_39_CCS_3000k: "Regional 39 CCS 3000k"
+    regional_steel_demand_39_Seq_200: "Regional 39 Seq 200"
+    regional_steel_demand_39_Seq_200_carbon_neutral: "Regional 39 Seq 200 CN"
+    regional_steel_demand_39_Seq_200_no_h2_network_carbon_neutral: "Regional 39 Seq 200 NH2 CN"
+    regional_steel_demand_39_Seq_250: "Regional 39 Seq 250"
+    regional_steel_demand_39_Seq_300: "Regional 39 Seq 300"
+    regional_steel_demand_39_Seq_350: "Regional 39 Seq 350"
+    regional_steel_demand_39_Seq_400: "Regional 39 Seq 400"
+    
