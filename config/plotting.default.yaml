@@ -145,8 +145,8 @@ plotting:
       unit: TWh
       unit_conversion: 1_000_000
       cmap: Blues
-      vmin:
-      vmax:
+      vmin: 30
+      vmax: 130
       region_unit: €/MWh
       bus_factor: 0.002
       branch_factor: 0.07
